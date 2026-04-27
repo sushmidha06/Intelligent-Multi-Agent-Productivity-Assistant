@@ -96,6 +96,24 @@ class AgentResult(dict):
     pass
 
 
+# Per-user RAG cache. Key: user_id. Value: (doc_signature, RagIndex).
+# Reusing the index across requests skips re-embedding (the dominant chat-latency cost).
+# The signature is a hash of the doc IDs+text — when the user's data changes, the hash
+# changes and we rebuild automatically. No TTL needed.
+_RAG_CACHE: dict[str, tuple[str, RagIndex]] = {}
+
+
+def _doc_signature(docs: list) -> str:
+    import hashlib
+    h = hashlib.md5()
+    for d in docs:
+        h.update(d.id.encode())
+        h.update(b"\x00")
+        h.update(d.text.encode())
+        h.update(b"\x01")
+    return h.hexdigest()
+
+
 class Orchestrator:
     def __init__(self, user_id: str, email: str | None = None):
         self.user_id = user_id
@@ -113,7 +131,14 @@ class Orchestrator:
         except Exception:
             email_bodies = []
         docs = build_docs_from_firestore(projects, invoices, alerts) + build_docs_from_emails(email_bodies)
-        self.rag_index = RagIndex(user_id, docs)
+
+        sig = _doc_signature(docs)
+        cached = _RAG_CACHE.get(user_id)
+        if cached and cached[0] == sig:
+            self.rag_index = cached[1]
+        else:
+            self.rag_index = RagIndex(user_id, docs)
+            _RAG_CACHE[user_id] = (sig, self.rag_index)
 
         # Spin up all MCP servers scoped to this user
         self.servers = [
