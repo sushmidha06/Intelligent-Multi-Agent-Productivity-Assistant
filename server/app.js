@@ -499,6 +499,18 @@ app.delete('/api/expenses/:id', requireAuth, async (req, res) => {
   }
 });
 
+// --- Warm up Render free-tier instance to avoid cold-start on first chat ---
+app.get('/api/chat/warmup', async (req, res) => {
+  const aiUrl = process.env.PYTHON_AI_BASE_URL;
+  if (!aiUrl) return res.json({ warmed: false, reason: 'not configured' });
+  try {
+    await axios.get(`${aiUrl}/health`, { timeout: 60000 });
+    res.json({ warmed: true });
+  } catch (e) {
+    res.json({ warmed: false, reason: e.message });
+  }
+});
+
 // --- Chat proxy → Python AI service ---
 app.post('/api/chat', requireAuth, async (req, res) => {
   const aiUrl = process.env.PYTHON_AI_BASE_URL;

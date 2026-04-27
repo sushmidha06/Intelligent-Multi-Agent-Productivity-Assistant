@@ -30,6 +30,7 @@ export const integrationsService = {
 
 export const chatService = {
   send: (message, history) => api.post('/chat', { message, history: history || [] }).then(r => r.data),
+  warmup: () => api.get('/chat/warmup').then(r => r.data).catch(() => null),
 };
 
 export const notificationsService = {

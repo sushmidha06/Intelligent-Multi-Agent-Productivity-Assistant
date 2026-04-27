@@ -62,7 +62,10 @@ function clear() {
 }
 
 watch(() => props.open, (v) => {
-  if (v) scrollBottom()
+  if (v) {
+    scrollBottom()
+    chatService.warmup()
+  }
 })
 
 function onKey(e) {
