@@ -72,6 +72,20 @@ class ChatResponse(BaseModel):
     tools_available: list[str]
 
 
+@app.get("/")
+def root() -> dict:
+    return {
+        "service": "sushmi-mcp-ai",
+        "status": "running",
+        "endpoints": {
+            "health": "/health",
+            "mcp_servers": "/mcp/servers",
+            "chat": "/chat (POST)",
+            "docs": "/docs",
+        },
+    }
+
+
 @app.get("/health")
 def health() -> dict:
     return {
