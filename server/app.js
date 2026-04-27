@@ -575,6 +575,39 @@ app.get('/api/internal/data/:collection', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Internal: proactive agents push an in-app notification on behalf of the user.
+// Auth: same service-token header as the other /internal endpoints.
+app.post('/api/internal/notifications/push', async (req, res) => {
+  const auth = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const claims = verifyServiceToken(auth);
+  if (!claims?.userId) return res.status(401).json({ error: 'invalid service token' });
+  const { title, body, kind } = req.body || {};
+  if (!title || !body) return res.status(400).json({ error: 'title and body required' });
+  try {
+    const id = await NotificationsService.push(claims.userId, {
+      title: String(title).slice(0, 200),
+      body: String(body).slice(0, 1000),
+      kind: kind || 'info',
+    });
+    res.json({ id, ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Internal: list all user IDs so the cron can iterate. Cron-only — protected
+// by the shared cron secret rather than the per-user service token.
+app.get('/api/internal/users', async (req, res) => {
+  const expected = process.env.CRON_SHARED_SECRET;
+  const presented = req.headers['x-cron-secret'];
+  if (!expected) return res.status(503).json({ error: 'CRON_SHARED_SECRET not configured' });
+  if (presented !== expected) return res.status(401).json({ error: 'invalid cron secret' });
+  try {
+    const { firestore } = await import('./services/firebaseAdmin.js');
+    const snap = await firestore.collection('users').get();
+    const users = snap.docs.map(d => ({ id: d.id, email: d.data().email || null }));
+    res.json({ users });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Internal: Python AI fetches indexed email bodies for RAG construction.
 app.get('/api/internal/email-bodies', async (req, res) => {
   const auth = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');

@@ -1,0 +1,56 @@
+name: Proactive Agents Cron
+
+on:
+  schedule:
+    # Every 30 minutes. GitHub Actions cron is best-effort (can be delayed
+    # under heavy load) but free and good enough for proactive nudges.
+    - cron: "*/30 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  run-agents:
+    name: Run proactive agents for every user
+    runs-on: ubuntu-latest
+    steps:
+      - name: List users
+        env:
+          NODE_API_BASE_URL: ${{ secrets.NODE_API_BASE_URL }}
+          CRON_SHARED_SECRET: ${{ secrets.CRON_SHARED_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NODE_API_BASE_URL}" ] || [ -z "${CRON_SHARED_SECRET}" ]; then
+            echo "Missing NODE_API_BASE_URL or CRON_SHARED_SECRET secret"
+            exit 1
+          fi
+          curl -fsSL \
+            -H "X-Cron-Secret: ${CRON_SHARED_SECRET}" \
+            "${NODE_API_BASE_URL}/internal/users" \
+            > users.json
+          jq -c '.users[] | {id, email}' users.json > users.ndjson || echo "[]" > users.ndjson
+
+      - name: Run agents per user
+        env:
+          PYTHON_AI_BASE_URL: ${{ secrets.PYTHON_AI_BASE_URL }}
+          CRON_SHARED_SECRET: ${{ secrets.CRON_SHARED_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PYTHON_AI_BASE_URL}" ]; then
+            echo "Missing PYTHON_AI_BASE_URL secret"
+            exit 1
+          fi
+          while IFS= read -r line; do
+            uid=$(echo "$line" | jq -r '.id')
+            email=$(echo "$line" | jq -r '.email // empty')
+            # uid/email come from our own Firestore via the auth'd /internal/users
+            # endpoint. They are not attacker-controlled GitHub event data.
+            url="${PYTHON_AI_BASE_URL}/agents/run?user_id=${uid}"
+            if [ -n "$email" ]; then
+              url="${url}&email=${email}"
+            fi
+            echo "Triggering agents for user"
+            curl -fsS -X POST \
+              -H "X-Cron-Secret: ${CRON_SHARED_SECRET}" \
+              "${url}" \
+              -o "/tmp/agent-report.json" \
+              || echo "  failed (continuing)"
+          done < users.ndjson

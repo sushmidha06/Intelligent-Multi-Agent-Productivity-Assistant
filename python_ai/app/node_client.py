@@ -48,6 +48,18 @@ class NodeClient:
         r.raise_for_status()
         return r.json()
 
+    def push_notification(self, title: str, body: str, kind: str = "info") -> dict:
+        """Pushes an in-app notification for this user via the Node backend.
+        Used by proactive agents to surface findings."""
+        r = self._client.post(
+            "/internal/notifications/push",
+            headers=self._headers(),
+            json={"title": title, "body": body, "kind": kind},
+            timeout=10.0,
+        )
+        r.raise_for_status()
+        return r.json()
+
     def close(self):
         self._client.close()
 

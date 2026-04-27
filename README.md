@@ -8,19 +8,60 @@ A production-grade demonstration of the **Model Context Protocol** (Anthropic 20
 
 ## What's inside
 
-- **5 MCP servers** exposing 15 tools — all spec-compliant (`list_tools`, `call_tool`, JSON-Schema args, `TextContent` results, `isError` on failure)
+- **7 MCP servers** exposing 17 tools — all spec-compliant (`list_tools`, `call_tool`, JSON-Schema args, `TextContent` results, `isError` on failure)
   - `firestore` — user's projects, invoices, alerts, dashboard
   - `github` — repos, PRs, commits, weekly activity (reads user's PAT)
   - `gmail` — recent/search/get (reads user's IMAP app password)
+  - `calendar` — list/search/draft Google Calendar events
   - `razorpay` — invoices, payments, customers (reads user's test keys)
-  - `knowledge_base` — semantic search over the user's workspace (Gemini embeddings + cosine)
-- **LangChain tool-calling agent** driving **Gemini 2.0 Flash** — real function-calling loop, capped at 8 iterations
+  - `expenses` — log expenses against a project
+  - `knowledge_base` — semantic search over workspace + indexed inbox
+- **Multi-agent system** — `Planner` → `Executor` two-step loop (`python_ai/app/planner.py`, `agent.py`). The Planner produces a 1-5 step plan; the Executor (LangChain `AgentExecutor`) follows it with real tool-calling. Trivial messages skip planning to keep latency down.
+- **Proactive Agents** — Four specialized background agents (`python_ai/app/agents/`) that run on a schedule to monitor user data:
+  - **Inbox Triage**: Uses Gemini to classify incoming emails by priority and pushes bundled notifications for urgent items.
+  - **Project Monitor**: Computes a health score for every project based on commit cadence, deadlines, and budget burn.
+  - **Anomaly Detector**: Identifies silent clients (no recent emails), overdue invoices, scope creep, and potential burnout patterns.
+  - **Recurring Workflows**: Generates weekly summaries every Monday morning and invoicing reminders on the 1st of each month.
+- **RAG with caching** — Gemini embeddings + Chroma Cloud (or in-memory numpy fallback). Per-user index keyed by data signature; rebuilds only when the user's data changes.
+- **Guardrails** (`python_ai/app/guardrails.py`)
+  - Input: max length, prompt-injection pattern detection
+  - Per-user sliding-window rate limit (30/hour)
+  - Output: heuristic PII redaction (email / phone / card-shaped runs)
+- **Observability** (`python_ai/app/observability.py`)
+  - Structured JSON logs with auto-attached `request_id` + `user_id`
+  - Per-request `X-Request-Id` middleware
+  - Prometheus-format `/metrics` endpoint (chats, tool calls, planner/executor latency, guardrail violations, PII redactions)
 - **Multi-tenant isolation** enforced at four layers:
   - Firestore rules deny all client access; backend Admin SDK only
   - Per-user integration credentials encrypted with **AES-256-GCM** at rest
   - MCP servers constructed with the tenant's `NodeClient` — can't reach another tenant's data by design
   - HS256 service JWTs (5-min TTL, `userId` claim) authenticate Node → Python
-- **Per-request RAG** — FAISS-style index built from the tenant's Firestore data, discarded after the request
+
+## Testing
+
+Both stacks have automated tests; CI runs them on every push (`.github/workflows/ci.yml`).
+
+```bash
+# Python (95 tests — pytest)
+cd python_ai && python -m pytest
+
+# Node (6 tests — node:test, no devDeps)
+npm test
+```
+
+Coverage:
+
+| Suite | What it covers |
+|-------|----------------|
+| `tests/test_agents.py` | all 4 proactive agents: signals, nudges, bundled notifications, time-windows |
+| `tests/test_guardrails.py` | input validation, injection patterns, PII redaction, rate limiter |
+| `tests/test_security.py` | JWT sign/verify roundtrip, expiry, bad signatures, `require_user` dep |
+| `tests/test_rag.py` | chunker, doc-signature cache key, numpy backend search, builders |
+| `tests/test_observability.py` | JSON formatter, context vars, metrics counters & histograms |
+| `tests/test_main.py` | `/health`, `/metrics`, auth on `/chat`, guardrails wiring (mocked Orchestrator), PII redaction in responses, rate-limit 429 |
+| `tests/test_mcp_servers.py` | every MCP server: metadata + tool schema validation + unknown-tool error |
+| `server/tests/jwt.test.js` | service-token roundtrip, bad token, wrong secret, TTL |
+| `server/tests/warmup.test.js` | `/api/chat/warmup` contract — both upstream up and down |
 
 ## Docs
 

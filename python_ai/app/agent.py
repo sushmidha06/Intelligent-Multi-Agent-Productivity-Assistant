@@ -21,6 +21,8 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langchain_openai import ChatOpenAI
 
 from .mcp_langchain import mcp_server_to_langchain_tools
+from .observability import metrics
+from .planner import Planner
 from .mcp_servers.calendar_server import CalendarMcpServer
 from .mcp_servers.expenses_server import ExpensesMcpServer
 from .mcp_servers.firestore_server import FirestoreMcpServer
@@ -196,6 +198,15 @@ class Orchestrator:
             handle_parsing_errors=True,
         )
 
+        # Second agent in the multi-agent system. Lazy: only instantiated
+        # on the first run() call, since trivial messages skip planning.
+        self._planner: Planner | None = None
+
+    def _get_planner(self) -> Planner:
+        if self._planner is None:
+            self._planner = Planner(self.tools)
+        return self._planner
+
     def run(self, message: str, history: list[dict] | None = None) -> AgentResult:
         lc_history = []
         for h in history or []:
@@ -206,29 +217,63 @@ class Orchestrator:
             else:
                 lc_history.append(HumanMessage(content=content))
 
+        # ---- Multi-agent step 1: Planner ----
+        plan_text = ""
+        plan_start = time.monotonic()
+        try:
+            plan_text = self._get_planner().plan(message, history=history)
+        except Exception:  # noqa: BLE001 — planner is non-fatal
+            plan_text = ""
+        plan_elapsed = time.monotonic() - plan_start
+        if plan_text:
+            metrics.observe("planner_duration_seconds", plan_elapsed)
+            metrics.incr("planner_invocations_total", outcome="ok")
+        else:
+            metrics.incr("planner_invocations_total", outcome="skipped")
+
+        # ---- Multi-agent step 2: Executor ----
+        # If we have a plan, prepend it to the input so the executor sees it
+        # as authoritative context. The system prompt already covers the rest.
+        executor_input = message
+        if plan_text:
+            executor_input = (
+                f"[Plan from Planner agent — follow these steps in order]\n"
+                f"{plan_text}\n\n"
+                f"[User's original message]\n{message}"
+            )
+
         # Gemini free-tier sometimes 429s on burst. Retry a couple of times
         # with modest backoff. Total ~19s — well under the 55s upstream cap.
         result = None
         delays = [4, 6, 9]
-        last_exc: Exception | None = None
+        exec_start = time.monotonic()
         for i in range(len(delays) + 1):
             try:
-                result = self.executor.invoke({"input": message, "chat_history": lc_history})
+                result = self.executor.invoke({"input": executor_input, "chat_history": lc_history})
                 break
             except Exception as e:  # noqa: BLE001 — only retry rate-limit-shaped errors
                 msg = str(e).lower()
                 if "rate" in msg or "429" in msg or "quota" in msg or "resource" in msg:
-                    last_exc = e
                     if i == len(delays):
+                        metrics.incr("executor_invocations_total", outcome="rate_limited")
                         raise
                     time.sleep(delays[i])
                 else:
+                    metrics.incr("executor_invocations_total", outcome="error")
                     raise
+        exec_elapsed = time.monotonic() - exec_start
+        metrics.observe("executor_duration_seconds", exec_elapsed)
+        metrics.incr("executor_invocations_total", outcome="ok")
+
         tool_calls = self._extract_tool_calls(result.get("intermediate_steps") or [])
+        for tc in tool_calls:
+            if tc.get("tool"):
+                metrics.incr("tool_calls_total", tool=tc["tool"])
         return AgentResult(
             response=result.get("output", ""),
             tool_calls=tool_calls,
             tools_available=[t.name for t in self.tools],
+            plan=plan_text or None,
         )
 
     @staticmethod

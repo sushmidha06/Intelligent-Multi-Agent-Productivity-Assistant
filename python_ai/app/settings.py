@@ -29,5 +29,10 @@ class Settings:
     # Agent loop
     AGENT_MAX_ITERATIONS: int = int(os.getenv("AGENT_MAX_ITERATIONS", "8"))
 
+    # Shared secret for the cron / scheduler endpoints. Anything calling
+    # /agents/run must present this in the X-Cron-Secret header. Distinct
+    # from JWT_SHARED_SECRET so leaking one doesn't grant the other.
+    CRON_SHARED_SECRET: str = os.getenv("CRON_SHARED_SECRET", "")
+
 
 settings = Settings()
