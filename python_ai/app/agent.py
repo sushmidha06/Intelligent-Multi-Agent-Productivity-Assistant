@@ -128,6 +128,13 @@ class Orchestrator:
             projects, invoices, alerts = [], [], []
         try:
             email_bodies = self.node.get_email_bodies()
+            # Cap to keep cold-cache embed under Vercel's 58s proxy budget.
+            # Most-recent N emails, body truncated — still gives the agent
+            # plenty of context for "what did people email me about" queries.
+            email_bodies = email_bodies[:30]
+            for e in email_bodies:
+                if isinstance(e.get("body"), str) and len(e["body"]) > 2000:
+                    e["body"] = e["body"][:2000]
         except Exception:
             email_bodies = []
         docs = build_docs_from_firestore(projects, invoices, alerts) + build_docs_from_emails(email_bodies)

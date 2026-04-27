@@ -519,7 +519,7 @@ app.post('/api/chat', requireAuth, async (req, res) => {
     const token = signServiceToken({ userId: req.user.id, email: req.user.email });
     const upstream = await axios.post(`${aiUrl}/chat`, req.body || {}, {
       headers: { Authorization: `Bearer ${token}` },
-      timeout: 55000,
+      timeout: 58000,
     });
     res.json(upstream.data);
   } catch (e) {
