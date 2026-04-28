@@ -120,6 +120,27 @@ class NodeClient:
         r.raise_for_status()
         return r.json()
 
+    @staticmethod
+    def lookup_bot_mapping(platform: str, platform_user_id: str) -> str | None:
+        """Resolves a Slack/Discord platformUserId to our internal userId via
+        the Node backend. Returns None when the user hasn't linked their
+        account. Used by the Slack webhook handler before it knows whose
+        Orchestrator to spin up — that's why this is a static method that
+        doesn't need a NodeClient instance bound to a userId."""
+        # The Node endpoint accepts any valid service token (auth is the
+        # shared secret itself); we sign with a sentinel `userId` so the
+        # token has the right shape.
+        token = sign_service_token("__bot_lookup__")
+        with httpx.Client(base_url=settings.NODE_API_BASE_URL, timeout=10.0) as c:
+            r = c.get(
+                f"/internal/bot-mapping/{platform}/{platform_user_id}",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            if r.status_code == 404:
+                return None
+            r.raise_for_status()
+            return r.json().get("internalUserId")
+
     def close(self):
         self._client.close()
 

@@ -17,6 +17,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
+import asyncio
+import hashlib
+import hmac
+import json as _json
+import time as _time
+
+import httpx
+
 from .agent import Orchestrator
 from .agents import ALL_AGENT_CLASSES
 from .node_client import NodeClient
@@ -136,6 +144,127 @@ def list_mcp_servers(claims: dict = Depends(require_user)) -> dict:
         return {"userId": claims["userId"], "servers": catalog}
     finally:
         orch.close()
+
+
+def _verify_slack_signature(timestamp: str, signature: str, raw_body: bytes) -> bool:
+    """Recompute Slack's HMAC-SHA256 over `v0:{ts}:{body}` and constant-time
+    compare. Reject anything older than 5 minutes to prevent replay."""
+    secret = settings.SLACK_SIGNING_SECRET
+    if not secret or not timestamp or not signature:
+        return False
+    try:
+        if abs(int(_time.time()) - int(timestamp)) > 60 * 5:
+            return False
+    except ValueError:
+        return False
+    base = f"v0:{timestamp}:".encode("utf-8") + raw_body
+    expected = "v0=" + hmac.new(secret.encode("utf-8"), base, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, signature)
+
+
+async def _process_slack_event(user_id: str, channel: str, text: str, bot_token: str) -> None:
+    """Runs the orchestrator for a Slack message, then posts the reply back to
+    the channel. Lives in a background task so the webhook can ack within
+    Slack's 3-second deadline."""
+    try:
+        orch = Orchestrator(user_id=user_id)
+        try:
+            result = await asyncio.to_thread(orch.run, text, [])
+            redacted, _ = redact_pii(result.get("response", ""))
+            reply = redacted or "(no response)"
+        finally:
+            orch.close()
+    except Exception as e:  # noqa: BLE001
+        log.exception("slack background processing failed")
+        reply = f"Sorry, I hit an error: {e}"
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as c:
+            await c.post(
+                "https://slack.com/api/chat.postMessage",
+                headers={"Authorization": f"Bearer {bot_token}"},
+                json={"channel": channel, "text": reply},
+            )
+    except Exception:  # noqa: BLE001
+        log.exception("slack chat.postMessage failed")
+
+
+@app.post("/webhooks/slack")
+async def slack_webhook(request: Request) -> Any:
+    """Receives Slack Events API webhooks. Verifies the HMAC signature, ack's
+    immediately (within Slack's 3s deadline), and processes the message in a
+    background task — Render keeps the worker alive after the response, unlike
+    Vercel where the function freezes the moment we ack."""
+    raw = await request.body()
+    timestamp = request.headers.get("x-slack-request-timestamp", "")
+    signature = request.headers.get("x-slack-signature", "")
+
+    # Slack's URL-verification handshake — sent once during app setup, before
+    # the signing secret is in play. Echo the challenge so verification passes.
+    try:
+        body = _json.loads(raw.decode("utf-8") or "{}")
+    except ValueError:
+        body = {}
+    if body.get("type") == "url_verification":
+        return {"challenge": body.get("challenge", "")}
+
+    if not _verify_slack_signature(timestamp, signature, raw):
+        log.warning(
+            "slack-webhook rejected: signature mismatch (rawBodyLen=%d, hasSecret=%s)",
+            len(raw), bool(settings.SLACK_SIGNING_SECRET),
+        )
+        raise HTTPException(status_code=401, detail="invalid signature")
+
+    if body.get("type") != "event_callback":
+        return {"ok": True}
+
+    event = body.get("event") or {}
+    if event.get("bot_id"):
+        return {"ok": True}  # ignore loops from our own bot
+
+    event_type = event.get("type")
+    if event_type not in ("app_mention", "message"):
+        return {"ok": True}
+
+    platform_user = event.get("user") or ""
+    text = event.get("text") or ""
+    channel = event.get("channel") or ""
+    if not platform_user or not channel:
+        return {"ok": True}
+
+    # Resolve Slack user → internal userId. If unlinked, post a help message
+    # rather than silently dropping.
+    try:
+        internal_user_id = NodeClient.lookup_bot_mapping("slack", platform_user)
+    except Exception:  # noqa: BLE001
+        log.exception("bot-mapping lookup failed")
+        internal_user_id = None
+
+    if not internal_user_id:
+        # Best-effort post — we don't have a botToken without a linked user.
+        # The user will see nothing; this branch mainly logs for the operator.
+        log.info("slack message from unlinked user platform_user=%s", platform_user)
+        return {"ok": True}
+
+    # Pull this user's stored Slack bot token from the Node backend.
+    try:
+        node = NodeClient(internal_user_id)
+        try:
+            conn = node.get_connection("slack") or {}
+        finally:
+            node.close()
+    except Exception:  # noqa: BLE001
+        log.exception("fetching slack connection failed")
+        conn = {}
+
+    bot_token = (conn.get("secrets") or {}).get("botToken")
+    if not bot_token:
+        log.warning("no slack botToken for user=%s", internal_user_id)
+        return {"ok": True}
+
+    # Fire-and-forget: ack now, process and reply after.
+    asyncio.create_task(_process_slack_event(internal_user_id, channel, text, bot_token))
+    return {"ok": True}
 
 
 @app.post("/chat", response_model=ChatResponse)

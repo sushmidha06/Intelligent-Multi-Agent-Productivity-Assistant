@@ -19,6 +19,7 @@ import { GoogleDocsService } from './services/googleDocsService.js';
 import { TogglService } from './services/togglService.js';
 import { LinearService } from './services/linearService.js';
 import { ApprovalService } from './services/approvalService.js';
+import { BotService } from './services/botService.js';
 import webhookRoutes from './routes/webhooks.js';
 import axios from 'axios';
 
@@ -587,6 +588,23 @@ function formatCurrencyAmount(n) {
   const v = Number(n || 0);
   return Number.isFinite(v) ? v.toLocaleString() : String(v);
 }
+
+// --- Internal: Python AI service resolves a Slack/Discord platform user
+// to our internal userId. Auth is the same shared-secret service-token; the
+// `userId` claim is irrelevant here (the request is an unauthenticated lookup
+// from the bot side, gated only by knowledge of JWT_SHARED_SECRET).
+app.get('/api/internal/bot-mapping/:platform/:platformUserId', async (req, res) => {
+  const auth = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const claims = verifyServiceToken(auth);
+  if (!claims) return res.status(401).json({ error: 'invalid service token' });
+  try {
+    const internalUserId = await BotService.getInternalUserId(req.params.platform, req.params.platformUserId);
+    if (!internalUserId) return res.status(404).json({ error: 'not linked' });
+    res.json({ internalUserId });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 // --- Internal: Python AI service fetches per-user secrets via JWT ---
 app.get('/api/internal/connections/:provider', async (req, res) => {

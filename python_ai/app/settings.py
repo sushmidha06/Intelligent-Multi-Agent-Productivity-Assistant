@@ -34,6 +34,10 @@ class Settings:
     # from JWT_SHARED_SECRET so leaking one doesn't grant the other.
     CRON_SHARED_SECRET: str = os.getenv("CRON_SHARED_SECRET", "")
 
+    # Slack signing secret — used to verify HMAC on inbound webhook requests
+    # from Slack. Same secret as the one configured on the Slack app side.
+    SLACK_SIGNING_SECRET: str = os.getenv("SLACK_SIGNING_SECRET", "")
+
     # Rate limiting — Upstash Redis (serverless).
     # If these are missing, we fall back to an in-memory deque limiter.
     UPSTASH_REDIS_REST_URL: str   = os.getenv("UPSTASH_REDIS_REST_URL", "")
