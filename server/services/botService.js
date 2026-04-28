@@ -20,7 +20,18 @@ export class BotService {
    * Resolves a platform userId to our internal userId.
    */
   static async getInternalUserId(platform, platformUserId) {
-    const doc = await firestore.collection('botMappings').doc(`${platform}_${platformUserId}`).get();
+    const docId = `${platform}_${platformUserId}`;
+    const ref = firestore.collection('botMappings').doc(docId);
+    const doc = await ref.get();
+    // Diagnostic — remove once /link flow is built. Confirms which project +
+    // doc id firebase-admin actually queries against.
+    console.log('[bot-mapping] lookup', {
+      docId,
+      path: ref.path,
+      projectId: ref.firestore?.app?.options?.projectId,
+      exists: doc.exists,
+      hasInternalUserId: !!doc.data()?.internalUserId,
+    });
     return doc.exists ? doc.data().internalUserId : null;
   }
 
