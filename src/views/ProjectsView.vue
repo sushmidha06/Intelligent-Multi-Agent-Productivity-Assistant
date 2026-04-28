@@ -27,6 +27,7 @@ const loading = ref(true)
 const showModal = ref(false)
 const submitting = ref(false)
 const error = ref('')
+const editingId = ref(null)
 
 const githubLoading = ref(false)
 const githubError = ref('')

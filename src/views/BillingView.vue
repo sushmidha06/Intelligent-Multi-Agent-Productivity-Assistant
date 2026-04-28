@@ -233,7 +233,7 @@ function statusConfig(s) {
           <button @click="showModal = false" class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:text-white hover:bg-white/5"><X :size="16" /></button>
         </header>
 
-        <form @submit.prevent="createInvoice" class="flex-1 min-h-0 overflow-y-auto px-6 py-5 space-y-4">
+        <form @submit.prevent="saveInvoice" class="flex-1 min-h-0 overflow-y-auto px-6 py-5 space-y-4">
           <div>
             <label class="block text-xs text-slate-400 mb-1.5">Client</label>
             <input v-model="form.client" type="text" placeholder="Acme Corp"
