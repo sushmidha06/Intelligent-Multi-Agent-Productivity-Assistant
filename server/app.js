@@ -15,7 +15,6 @@ import { EmailBodyStore } from './services/emailBodyStore.js';
 import { classifyEmail, FOLDER_ORDER } from './services/emailClassifier.js';
 import { EmailMetaService } from './services/emailMetaService.js';
 import { ExpensesService, EXPENSE_CATEGORIES } from './services/expensesService.js';
-import { StorageService } from './services/storageService.js';
 import { GoogleDocsService } from './services/googleDocsService.js';
 import { TogglService } from './services/togglService.js';
 import { LinearService } from './services/linearService.js';
@@ -681,21 +680,6 @@ app.get('/api/internal/email-bodies', async (req, res) => {
     const items = await EmailBodyStore.list(claims.userId, { limit: 200 });
     res.json({ items });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// Internal: AI service uploads a generated document (proposal, invoice pdf, etc.)
-app.post('/api/internal/documents/upload', express.raw({ type: 'application/pdf', limit: '5mb' }), async (req, res) => {
-  const auth = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-  const claims = verifyServiceToken(auth);
-  if (!claims?.userId) return res.status(401).json({ error: 'invalid service token' });
-  
-  const fileName = req.headers['x-file-name'] || 'document.pdf';
-  try {
-    const { url, path } = await StorageService.uploadDocument(claims.userId, fileName, req.body);
-    res.status(201).json({ url, path });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
 });
 
 // Internal: AI service creates a Google Doc proposal

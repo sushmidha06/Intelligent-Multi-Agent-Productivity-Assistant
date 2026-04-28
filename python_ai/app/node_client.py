@@ -67,21 +67,6 @@ class NodeClient:
         r.raise_for_status()
         return r.json()
 
-    def upload_document(self, file_name: str, content: bytes) -> str:
-        """Uploads a generated PDF to the Node backend for storage.
-        Returns the signed public URL of the uploaded document."""
-        headers = self._headers()
-        headers["X-File-Name"] = file_name
-        headers["Content-Type"] = "application/pdf"
-        r = self._client.post(
-            "/internal/documents/upload",
-            headers=headers,
-            content=content,
-            timeout=20.0,
-        )
-        r.raise_for_status()
-        return r.json().get("url", "")
-
     def create_google_doc(self, payload: dict) -> dict:
         """Asks the Node backend to create and format a Google Doc.
         Returns { "url", "documentId", "title" }."""

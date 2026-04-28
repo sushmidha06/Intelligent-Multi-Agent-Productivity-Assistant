@@ -20,13 +20,10 @@ function parseServiceAccount() {
   }
 }
 
-const bucketName = process.env.FIREBASE_STORAGE_BUCKET || 'freelance-mcp-c3b42.firebasestorage.app';
-
 if (!admin.apps.length) {
   const svc = parseServiceAccount();
   const config = {
     projectId: svc?.project_id || process.env.FIREBASE_PROJECT_ID || 'freelance-mcp-c3b42',
-    storageBucket: bucketName,
   };
   if (svc) {
     config.credential = admin.credential.cert(svc);
@@ -38,6 +35,5 @@ if (!admin.apps.length) {
 
 export const firestore = admin.firestore();
 export const adminAuth = admin.auth();
-export const bucket = admin.storage().bucket();
 export { admin };
 export default app;
