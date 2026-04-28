@@ -72,17 +72,29 @@ class ExpensesMcpServer(McpServer):
         if category not in ALLOWED_CATEGORIES:
             category = "Other"
         amount = float(amount)
-        payload = {
+        # `gate_args` uses snake_case keys matching THIS handler's parameters,
+        # so re-invocation after approval works (see issue_tracker_server for
+        # the same pattern). The Node API gets the camelCase `projectId` only
+        # inside `do_create`.
+        gate_args = {
             "vendor": vendor.strip(),
             "amount": amount,
+            "date": date,
             "category": category,
-            "projectId": project_id or None,
+            "project_id": project_id or None,
             "notes": notes or "",
         }
-        if date:
-            payload["date"] = date
 
         def do_create():
+            payload = {
+                "vendor": vendor.strip(),
+                "amount": amount,
+                "category": category,
+                "projectId": project_id or None,
+                "notes": notes or "",
+            }
+            if date:
+                payload["date"] = date
             try:
                 created = self.node.create_expense(payload)
                 return {
@@ -100,8 +112,8 @@ class ExpensesMcpServer(McpServer):
         if amount >= self.APPROVAL_THRESHOLD:
             return self._gate_with_approval(
                 tool_name="expenses__create_expense",
-                args=payload,
-                summary=f"log a {category} expense of {amount:,.2f} from {payload['vendor']}",
+                args=gate_args,
+                summary=f"log a {category} expense of {amount:,.2f} from {gate_args['vendor']}",
                 do=do_create,
             )
         return do_create()

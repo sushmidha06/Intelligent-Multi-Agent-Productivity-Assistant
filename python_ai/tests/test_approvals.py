@@ -83,6 +83,19 @@ class TestExpenseApprovalGate:
         assert len(node.expenses) == 1
         assert node.approvals == []  # bypass skipped the queue
 
+    def test_gated_args_use_handler_signature(self):
+        """Regression: stored args must use snake_case `project_id` so the
+        executor can re-spread them into the handler. camelCase `projectId`
+        would crash with `unexpected keyword argument`."""
+        node = FakeNode()
+        srv = ExpensesMcpServer(node)
+        srv.call_tool("create_expense", {
+            "vendor": "Big", "amount": 500.0, "project_id": "p1",
+        })
+        stored = node.approvals[0]["args"]
+        assert "project_id" in stored
+        assert "projectId" not in stored
+
 
 # ---------- Linear issues: ALWAYS gated ----------
 
@@ -102,6 +115,20 @@ class TestLinearIssueGate:
         srv._approval_bypass = True
         srv.call_tool("create_linear_issue", {"title": "Bug", "description": "x"})
         assert len(node.issues) == 1
+
+    def test_gated_args_use_handler_signature(self):
+        """Regression: the args stored on the approval record must match
+        the handler's parameter names (snake_case `team_id`), not the Linear
+        API field name (`teamId`). Otherwise the executor re-invokes the
+        handler with a kwarg it doesn't accept and crashes."""
+        node = FakeNode()
+        srv = IssueTrackerMcpServer(node)
+        srv.call_tool("create_linear_issue", {
+            "title": "Bug", "description": "x", "team_id": "team-1",
+        })
+        stored = node.approvals[0]["args"]
+        assert "team_id" in stored
+        assert "teamId" not in stored
 
 
 # ---------- Documents/proposal: ALWAYS gated ----------
@@ -149,6 +176,23 @@ class TestAutoBilling:
         # The summary should include the computed total.
         assert "500" in node.approvals[0]["summary"]
         assert node.invoices == []  # not yet — gated
+
+    def test_gated_args_use_handler_signature(self):
+        """Regression: stored args must mirror the handler signature
+        (`start_date`, `end_date`, `hourly_rate`), not the Node-API payload
+        (`amount`, `dueDate`, `lineItems`). The latter would 500 on approve."""
+        node = FakeNode()
+        node.toggl_entries = [{"description": "x", "duration": 3600}]
+        srv = TimesheetsMcpServer(node)
+        srv.call_tool("create_invoice_from_entries", {
+            "client": "Acme",
+            "start_date": "2026-04-01",
+            "end_date": "2026-04-07",
+            "hourly_rate": 100,
+        })
+        stored = node.approvals[0]["args"]
+        assert {"start_date", "end_date", "hourly_rate"} <= stored.keys()
+        assert "lineItems" not in stored  # Node-API key must not leak in
 
     def test_create_invoice_bypass_actually_files(self):
         node = FakeNode()

@@ -110,11 +110,15 @@ class TimesheetsMcpServer(McpServer):
             return {"error": f"no billable time found between {start_date} and {end_date}"}
 
         amount = round(total_hours * float(hourly_rate), 2)
-        payload = {
+        # `gate_args` mirrors THIS handler's signature so the approval-execute
+        # path can re-invoke it. The Node-API payload (camelCase, line items)
+        # is built fresh inside `do_create`.
+        gate_args = {
             "client": client,
-            "amount": amount,
-            "dueDate": due_date,
-            "lineItems": line_items[:50],  # cap so we don't blow Firestore doc-size limits
+            "start_date": start_date,
+            "end_date": end_date,
+            "hourly_rate": hourly_rate,
+            "due_date": due_date,
         }
         summary = (
             f"create invoice for {client}: {total_hours}h × ${hourly_rate}/h = "
@@ -122,6 +126,12 @@ class TimesheetsMcpServer(McpServer):
         )
 
         def do_create():
+            payload = {
+                "client": client,
+                "amount": amount,
+                "dueDate": due_date,
+                "lineItems": line_items[:50],  # cap so we don't blow Firestore doc-size limits
+            }
             try:
                 saved = self.node.create_invoice(payload)
                 return {
@@ -139,7 +149,7 @@ class TimesheetsMcpServer(McpServer):
 
         return self._gate_with_approval(
             tool_name="timesheets__create_invoice_from_entries",
-            args=payload,
+            args=gate_args,
             summary=summary,
             do=do_create,
         )

@@ -45,16 +45,27 @@ class IssueTrackerMcpServer(McpServer):
     def _create_issue(self, title: str, description: str, team_id: str | None = None, priority: int = 0) -> dict | str:
         # Linear issues are visible to teammates / clients — gate behind approval
         # so the agent can't silently file tickets on the user's behalf.
+        #
+        # IMPORTANT: the args dict here is what gets stored in the approval queue
+        # and re-spread back into THIS handler on approve. Keys MUST match the
+        # handler's parameter names (snake_case `team_id`), NOT the Linear API
+        # field name (`teamId`). The camelCase translation happens at the Node
+        # boundary inside `do_create`, not here.
         args = {
             "title": title,
             "description": description,
-            "teamId": team_id,
+            "team_id": team_id,
             "priority": priority,
         }
 
         def do_create():
             try:
-                return self.node.create_linear_issue(args)
+                return self.node.create_linear_issue({
+                    "title": title,
+                    "description": description,
+                    "teamId": team_id,
+                    "priority": priority,
+                })
             except Exception as e:  # noqa: BLE001
                 return {"error": str(e)}
 
