@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { CheckCircle2, XCircle, Clock, ShieldCheck, Zap, ArrowRight, Loader2 } from 'lucide-vue-next'
-import { api } from '../services/api'
+import api from '../services/api'
 
 const approvals = ref([])
 const loading = ref(true)
