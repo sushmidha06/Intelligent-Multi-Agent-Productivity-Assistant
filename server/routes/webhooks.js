@@ -7,11 +7,8 @@ import axios from 'axios';
 
 const router = express.Router();
 
-// We need the raw request body for both Slack and Discord signature verification.
-// `express.json()` strips it, so we capture it in the `verify` callback before parsing.
-const captureRaw = express.json({
-  verify: (req, _res, buf) => { req.rawBody = buf; },
-});
+// Raw body capture lives on the global `express.json()` in app.js so a single
+// parser reads each request's body. Webhook routes just read `req.rawBody`.
 
 
 // ---------------------------------------------------------------------------
@@ -49,7 +46,7 @@ function verifySlackSignature(req) {
   return { ok, reason: ok ? null : 'signature mismatch' };
 }
 
-router.post('/slack', captureRaw, async (req, res) => {
+router.post('/slack', async (req, res) => {
   const { type, challenge, event } = req.body || {};
 
   // Slack's URL-verification handshake: it sends a one-off `url_verification`
@@ -60,7 +57,11 @@ router.post('/slack', captureRaw, async (req, res) => {
   // Every other request must be signed.
   const sig = verifySlackSignature(req);
   if (!sig.ok) {
-    console.warn('[slack-webhook] rejected:', sig.reason);
+    console.warn(
+      '[slack-webhook] rejected:', sig.reason,
+      'rawBodyLen=', req.rawBody?.length ?? 0,
+      'hasSecret=', !!process.env.SLACK_SIGNING_SECRET,
+    );
     return res.status(401).json({ error: 'invalid signature' });
   }
 
@@ -122,7 +123,7 @@ function verifyDiscordSignature(req) {
   }
 }
 
-router.post('/discord', captureRaw, async (req, res) => {
+router.post('/discord', async (req, res) => {
   const sig = verifyDiscordSignature(req);
   if (!sig.ok) {
     console.warn('[discord-webhook] rejected:', sig.reason);

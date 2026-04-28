@@ -40,7 +40,14 @@ app.use(cors({
 }));
 app.use(helmet());
 app.use(morgan('dev'));
-app.use(express.json());
+// Capture the raw body during JSON parsing so webhook routes (Slack, Discord)
+// can verify HMAC signatures over the original bytes. Without `verify`, the
+// raw body is consumed by the parser and signature checks see an empty string
+// — every signed webhook then 401s with "signature mismatch".
+app.use(express.json({
+  verify: (req, _res, buf) => { req.rawBody = buf; },
+  limit: '1mb',
+}));
 
 function getToken(req) {
   const h = req.headers.authorization || '';
