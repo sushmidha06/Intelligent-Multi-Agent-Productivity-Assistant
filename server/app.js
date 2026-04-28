@@ -765,15 +765,23 @@ app.get('/api/approvals', requireAuth, async (req, res) => {
 app.post('/api/approvals/:id/approve', requireAuth, async (req, res) => {
   try {
     const approval = await ApprovalService.updateStatus(req.user.id, req.params.id, 'approved');
-    // Execute the tool via Python service
+    if (!approval) return res.status(404).json({ error: 'approval not found' });
+    // Execute the tool via Python service. The token payload must be an
+    // OBJECT — passing positional args silently produces a JWT without
+    // userId, which the Python side then rejects (401 → 502 here).
+    const token = signServiceToken({ userId: req.user.id, email: req.user.email });
     const r = await axios.post(`${process.env.PYTHON_AI_BASE_URL}/approvals/execute`, {
       tool: approval.tool,
-      arguments: approval.arguments
+      arguments: approval.arguments,
     }, {
-      headers: { Authorization: `Bearer ${signServiceToken(req.user.id, req.user.email)}` }
+      headers: { Authorization: `Bearer ${token}` },
+      timeout: 58000,
     });
     res.json({ status: 'approved', result: r.data });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    const status = e.response?.status || 500;
+    res.status(status).json({ error: e.response?.data?.detail || e.message });
+  }
 });
 
 app.post('/api/approvals/:id/reject', requireAuth, async (req, res) => {

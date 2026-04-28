@@ -244,28 +244,48 @@ async def chat_audio(request: Request, claims: dict = Depends(require_user)) -> 
 
 @app.post("/approvals/execute")
 async def execute_approval(request: Request, claims: dict = Depends(require_user)) -> dict:
-    """Executes a previously pending tool call after human approval."""
+    """Executes a previously pending tool call after human approval.
+
+    The Node side stores the FULLY-QUALIFIED tool name (e.g.
+    `issues__create_linear_issue`) in the approval record, but each MCP server
+    only knows the short name (`create_linear_issue`). We split on `__` and
+    locate the matching server by `server_name`."""
     data = await request.json()
-    tool_name = data.get("tool")
-    args = data.get("arguments", {})
-    
+    tool_name = data.get("tool") or ""
+    args = data.get("arguments") or {}
+
+    if "__" not in tool_name:
+        raise HTTPException(status_code=400, detail=f"malformed tool name: {tool_name!r}")
+    server_name, short_name = tool_name.split("__", 1)
+
     user_id = claims["userId"]
     user_id_ctx.set(user_id)
-    
+
     orch = Orchestrator(user_id=user_id, email=claims.get("email"))
     try:
-        # Find the tool in the orchestrator's servers
         for srv in orch.servers:
-            if tool_name in srv._tools:
-                # Set the bypass flag so the handler actually executes
-                srv._approval_bypass = True
-                # Directly call the handler
-                result = srv._tools[tool_name].handler(**args)
+            if srv.server_name != server_name:
+                continue
+            if short_name not in srv._tools:
+                continue
+            # Bypass the approval gate so the handler runs the real action.
+            srv._approval_bypass = True
+            try:
+                # Filter out None args — handlers use defaults for omitted ones.
+                cleaned = {k: v for k, v in args.items() if v is not None}
+                result = srv._tools[short_name].handler(**cleaned)
                 return {"success": True, "result": result}
-        
-        raise HTTPException(status_code=404, detail=f"Tool {tool_name} not found")
+            finally:
+                srv._approval_bypass = False
+
+        raise HTTPException(
+            status_code=404,
+            detail=f"Tool {tool_name!r} not found (looked for server={server_name!r}, tool={short_name!r})",
+        )
+    except HTTPException:
+        raise
     except Exception as e:
-        log.error(f"Approval execution failed: {str(e)}")
+        log.error("Approval execution failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         orch.close()

@@ -16,11 +16,15 @@ export class ApprovalService {
   }
 
   static async list(userId) {
+    // Single-field where + sort done in memory — avoids needing a composite
+    // (status + createdAt) Firestore index. The approvals collection is
+    // small (per-user, only pending items matter), so the cost is negligible.
     const snap = await firestore.collection('users').doc(userId).collection('approvals')
       .where('status', '==', 'pending')
-      .orderBy('createdAt', 'desc')
       .get();
-    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const items = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    items.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+    return items;
   }
 
   static async updateStatus(userId, approvalId, status) {
