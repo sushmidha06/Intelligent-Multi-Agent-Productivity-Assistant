@@ -506,25 +506,28 @@ app.delete('/api/expenses/:id', requireAuth, async (req, res) => {
   }
 });
 
-app.post('/api/chat', requireAuth, async (req, res) => {
-  try {
-    const r = await axios.post(`${process.env.PYTHON_AI_BASE_URL}/chat`, req.body, {
-      headers: { Authorization: `Bearer ${signServiceToken(req.user.id, req.user.email)}` },
-    });
-    res.json(r.data);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
+// /api/chat is defined further below with the correct service-token payload
+// shape and a real proxy timeout. This block previously had a buggy duplicate
+// that called signServiceToken(string, string) — shadowing the real handler
+// and breaking auth on the Python side. Removed.
 
 app.post('/api/chat/audio', requireAuth, express.raw({ type: 'audio/*', limit: '10mb' }), async (req, res) => {
+  const aiUrl = process.env.PYTHON_AI_BASE_URL;
+  if (!aiUrl) return res.status(503).json({ error: 'AI service not configured' });
   try {
-    const r = await axios.post(`${process.env.PYTHON_AI_BASE_URL}/chat/audio`, req.body, {
-      headers: { 
-        Authorization: `Bearer ${signServiceToken(req.user.id, req.user.email)}`,
-        'Content-Type': req.headers['content-type'] || 'audio/webm'
+    const token = signServiceToken({ userId: req.user.id, email: req.user.email });
+    const r = await axios.post(`${aiUrl}/chat/audio`, req.body, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': req.headers['content-type'] || 'audio/webm',
       },
+      timeout: 58000,
     });
     res.json(r.data);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    const status = e.response?.status || 502;
+    res.status(status).json({ error: e.response?.data?.detail || e.message });
+  }
 });
 
 // --- Warm up Render free-tier instance to avoid cold-start on first chat ---
