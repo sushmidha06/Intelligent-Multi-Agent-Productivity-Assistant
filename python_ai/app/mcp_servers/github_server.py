@@ -1,6 +1,5 @@
 """GitHub MCP server. Uses the user's PAT (fetched from the encrypted
-connections store) to call api.github.com. Tools are read-only on purpose —
-a public demo shouldn't let an agent mutate a user's repos."""
+connections store) to call api.github.com."""
 
 from __future__ import annotations
 
@@ -101,6 +100,38 @@ class GithubMcpServer(McpServer):
             },
             self._repo_activity,
         )
+        self._tool(
+            "create_issue",
+            "Create a new issue in a GitHub repository.",
+            {
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "Format: owner/repo"},
+                    "title": {"type": "string"},
+                    "body": {"type": "string", "description": "Markdown content for the issue description"},
+                },
+                "required": ["repo", "title"],
+                "additionalProperties": False,
+            },
+            self._create_issue,
+        )
+        self._tool(
+            "create_pull_request",
+            "Create a new pull request in a GitHub repository.",
+            {
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "Format: owner/repo"},
+                    "title": {"type": "string"},
+                    "head": {"type": "string", "description": "The name of the branch where your changes are implemented (e.g. 'feature-x')"},
+                    "base": {"type": "string", "description": "The name of the branch you want the changes pulled into (e.g. 'main')"},
+                    "body": {"type": "string", "description": "Markdown content for the PR description"},
+                },
+                "required": ["repo", "title", "head", "base"],
+                "additionalProperties": False,
+            },
+            self._create_pr,
+        )
 
     # --- handlers ---
     def _list_repos(self, limit: int = 10, sort: str = "updated") -> dict:
@@ -179,3 +210,31 @@ class GithubMcpServer(McpServer):
             "owner_commits_last_4_weeks": last_4,
             "avg_owner_commits_per_week": round(total / 52, 1) if owner_weekly else 0,
         }
+
+    def _create_issue(self, repo: str, title: str, body: str | None = None) -> dict:
+        def do_create():
+            with self._client() as c:
+                r = c.post(f"/repos/{repo}/issues", json={"title": title, "body": body})
+                r.raise_for_status()
+                return r.json()
+
+        return self._gate_with_approval(
+            tool_name="github__create_issue",
+            args={"repo": repo, "title": title, "body": body},
+            summary=f"create issue in {repo}: {title}",
+            do=do_create,
+        )
+
+    def _create_pr(self, repo: str, title: str, head: str, base: str, body: str | None = None) -> dict:
+        def do_create():
+            with self._client() as c:
+                r = c.post(f"/repos/{repo}/pulls", json={"title": title, "head": head, "base": base, "body": body})
+                r.raise_for_status()
+                return r.json()
+
+        return self._gate_with_approval(
+            tool_name="github__create_pull_request",
+            args={"repo": repo, "title": title, "head": head, "base": base, "body": body},
+            summary=f"create PR in {repo}: {title}",
+            do=do_create,
+        )

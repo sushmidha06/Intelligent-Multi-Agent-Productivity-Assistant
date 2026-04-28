@@ -1,10 +1,12 @@
-"""Gmail MCP server. Uses Gmail IMAP with an app password (user pastes in
-Settings → Integrations → Gmail). Read-only tools for the Inbox Triage agent."""
+"""Gmail MCP server. Uses Gmail IMAP/SMTP with an app password (user pastes in
+Settings → Integrations → Gmail)."""
 
 from __future__ import annotations
 
 import email
 import imaplib
+import smtplib
+from email.message import EmailMessage
 from email.header import decode_header
 from email.utils import parsedate_to_datetime
 from typing import Any
@@ -125,6 +127,21 @@ class GmailMcpServer(McpServer):
             },
             self._get_body,
         )
+        self._tool(
+            "send_email",
+            "Send a new email from the user's Gmail account.",
+            {
+                "type": "object",
+                "properties": {
+                    "to": {"type": "string", "description": "Recipient email address"},
+                    "subject": {"type": "string", "description": "Email subject line"},
+                    "body": {"type": "string", "description": "Full plain-text body of the email"},
+                },
+                "required": ["to", "subject", "body"],
+                "additionalProperties": False,
+            },
+            self._send_email,
+        )
 
     # --- handlers ---
     def _list_recent(self, limit: int = 10, unread_only: bool = False) -> dict:
@@ -192,6 +209,30 @@ class GmailMcpServer(McpServer):
             "date": _format_date(headers.get("Date")) if headers else "",
             "preview": preview,
         }
+
+    def _send_email(self, to: str, subject: str, body: str) -> dict:
+        email_addr, password = self._credentials()
+        msg = EmailMessage()
+        msg.set_content(body)
+        msg["Subject"] = subject
+        msg["From"] = email_addr
+        msg["To"] = to
+
+        def do_send():
+            try:
+                with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
+                    smtp.login(email_addr, password)
+                    smtp.send_message(msg)
+                return {"success": True, "to": to, "subject": subject}
+            except Exception as e:
+                return {"error": str(e)}
+
+        return self._gate_with_approval(
+            tool_name="gmail__send_email",
+            args={"to": to, "subject": subject, "body": body},
+            summary=f"send email to {to}: {subject}",
+            do=do_send,
+        )
 
 
 def _format_date(raw: str | None) -> str:

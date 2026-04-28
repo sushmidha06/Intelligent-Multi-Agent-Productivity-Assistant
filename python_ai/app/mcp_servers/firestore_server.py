@@ -50,11 +50,21 @@ class FirestoreMcpServer(McpServer):
             {"type": "object", "properties": {}, "additionalProperties": False},
             self._alerts,
         )
+        self._tool(
+            "list_integrations",
+            "Check which external accounts (GitHub, Gmail, Razorpay, etc.) are currently connected.",
+            {"type": "object", "properties": {}, "additionalProperties": False},
+            self._list_integrations,
+        )
 
     # --- handlers ---
     def _list_projects(self) -> dict:
         items = self.node.get_collection("projects")
         return {"count": len(items), "projects": items}
+
+    def _list_integrations(self) -> dict:
+        integrations = self.node.get_integrations()
+        return {"count": len(integrations), "integrations": integrations}
 
     def _list_invoices(self, status: str = "All") -> dict:
         items = self.node.get_collection("invoices")

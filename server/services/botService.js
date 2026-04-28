@@ -59,22 +59,52 @@ export class BotService {
       return "Your account is not linked to Sushmi. Please type `link your-email@example.com` to connect your Slack/Discord account to your Sushmi workspace.";
     }
 
-    // Call the Python AI service. signServiceToken expects an OBJECT payload
-    // — passing a string here silently produces a JWT without `userId`, which
-    // the Python side then rejects (and the bot user sees a generic error).
+    // Fetch recent history from this specific bot channel/user
+    const history = await this.getHistory(platform, platformUserId);
+
     const token = signServiceToken({ userId: internalUserId });
     try {
+      // Save user message first
+      await this.saveHistory(platform, platformUserId, 'user', messageText);
+
       const r = await axios.post(`${process.env.PYTHON_AI_BASE_URL}/chat`, {
         message: messageText,
-        history: [],
+        history: history,
       }, {
         headers: { Authorization: `Bearer ${token}` },
         timeout: 58000,
       });
-      return r.data.response;
+
+      const reply = r.data.response;
+      // Save bot reply
+      await this.saveHistory(platform, platformUserId, 'assistant', reply);
+
+      return reply;
     } catch (e) {
       console.error('Bot AI error:', e.response?.data || e.message);
       return "Sorry, I encountered an error while processing your request.";
     }
+  }
+
+  static async saveHistory(platform, platformUserId, role, content) {
+    const docId = `${platform}_${platformUserId}`;
+    await firestore.collection('botMappings').doc(docId).collection('history').add({
+      role,
+      content,
+      createdAt: new Date().toISOString()
+    });
+  }
+
+  static async getHistory(platform, platformUserId, limit = 10) {
+    const docId = `${platform}_${platformUserId}`;
+    const snap = await firestore.collection('botMappings').doc(docId).collection('history')
+      .orderBy('createdAt', 'desc')
+      .limit(limit)
+      .get();
+    
+    return snap.docs.map(d => ({
+      role: d.data().role,
+      content: d.data().content
+    })).reverse();
   }
 }
