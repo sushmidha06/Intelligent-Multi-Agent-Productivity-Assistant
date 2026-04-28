@@ -34,5 +34,10 @@ class Settings:
     # from JWT_SHARED_SECRET so leaking one doesn't grant the other.
     CRON_SHARED_SECRET: str = os.getenv("CRON_SHARED_SECRET", "")
 
+    # Rate limiting — Upstash Redis (serverless).
+    # If these are missing, we fall back to an in-memory deque limiter.
+    UPSTASH_REDIS_REST_URL: str   = os.getenv("UPSTASH_REDIS_REST_URL", "")
+    UPSTASH_REDIS_REST_TOKEN: str = os.getenv("UPSTASH_REDIS_REST_TOKEN", "")
+
 
 settings = Settings()

@@ -128,10 +128,11 @@ Then redeploy: `vercel --prod --yes`.
 | `GEMINI_MODEL`             |        | ✓ (default `gemini-2.0-flash`) |  |
 | `GEMINI_EMBED_MODEL`       |        | ✓ (default `models/gemini-embedding-001`) | |
 | `NODE_API_BASE_URL`        |        | ✓ (default `https://sushmi-mcp.vercel.app/api`) | |
-| `VITE_API_BASE_URL`        |        |        | ✓              |
 | `VITE_FIREBASE_*`          |        |        | ✓              |
 | `CRON_SHARED_SECRET`       | ✓      |        | (GitHub Secret) |
 | `NODE_API_BASE_URL`        |        | ✓      | (GitHub Secret) |
+| `UPSTASH_REDIS_REST_URL`   |        | ✓      |                |
+| `UPSTASH_REDIS_REST_TOKEN` |        | ✓      |                |
 
 ---
 

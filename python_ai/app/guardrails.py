@@ -22,6 +22,12 @@ import re
 import time
 from collections import deque
 from threading import Lock
+from .settings import settings
+
+try:
+    from upstash_redis import Redis
+except ImportError:
+    Redis = None
 
 
 MAX_MESSAGE_CHARS = 4000
@@ -153,7 +159,56 @@ class _SlidingWindowLimiter:
             return True, self.limit - len(bucket)
 
 
-_limiter = _SlidingWindowLimiter(RATE_LIMIT_PER_HOUR, RATE_WINDOW_SECONDS)
+class RedisSlidingWindowLimiter:
+    """Upstash Redis sliding-window counter.
+
+    Same logic as the in-memory one but persisted in Redis. Uses a Sorted Set (ZSET)
+    where the score is the timestamp.
+    """
+
+    def __init__(self, url: str, token: str, limit: int, window_seconds: int):
+        self.redis = Redis(url=url, token=token)
+        self.limit = limit
+        self.window = window_seconds
+
+    def check(self, user_id: str) -> tuple[bool, int]:
+        key = f"rate_limit:{user_id}"
+        now = time.time()
+        cutoff = now - self.window
+
+        # Using a Lua script to ensure atomicity and minimize round-trips.
+        # This keeps the "slowness" to an absolute minimum.
+        script = """
+        local key = KEYS[1]
+        local now = tonumber(ARGV[1])
+        local window = tonumber(ARGV[2])
+        local limit = tonumber(ARGV[3])
+        local cutoff = now - window
+
+        redis.call('ZREMRANGEBYSCORE', key, 0, cutoff)
+        local count = redis.call('ZCARD', key)
+        if count >= limit then
+            return {0, 0}
+        end
+        redis.call('ZADD', key, now, now)
+        redis.call('EXPIRE', key, window)
+        return {1, limit - count - 1}
+        """
+        # res is [allowed, remaining]
+        res = self.redis.eval(script, [key], [now, self.window, self.limit])
+        return bool(res[0]), int(res[1])
+
+
+# Global limiter instance. Fall back to in-memory if Redis is not configured.
+if Redis and settings.UPSTASH_REDIS_REST_URL and settings.UPSTASH_REDIS_REST_TOKEN:
+    _limiter = RedisSlidingWindowLimiter(
+        settings.UPSTASH_REDIS_REST_URL,
+        settings.UPSTASH_REDIS_REST_TOKEN,
+        RATE_LIMIT_PER_HOUR,
+        RATE_WINDOW_SECONDS
+    )
+else:
+    _limiter = _SlidingWindowLimiter(RATE_LIMIT_PER_HOUR, RATE_WINDOW_SECONDS)
 
 
 def check_rate_limit(user_id: str) -> int:
