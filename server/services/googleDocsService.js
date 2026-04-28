@@ -18,9 +18,11 @@ export class GoogleDocsService {
     const startDate = payload.start_date || payload.startDate || new Date().toISOString().split('T')[0];
 
     // Client ID might be in secrets (encrypted) or metadata (plain text) depending on UI version
-    const clientId = conn.secrets.clientId || conn.metadata.clientId;
-    const clientSecret = conn.secrets.clientSecret;
-    const refreshToken = conn.secrets.refreshToken;
+    const secrets = conn.secrets || {};
+    const metadata = conn.metadata || {};
+    const clientId = secrets.clientId || metadata.clientId;
+    const clientSecret = secrets.clientSecret;
+    const refreshToken = secrets.refreshToken;
 
     if (!clientId || !clientSecret) {
       throw new Error('Google Docs configuration is incomplete (missing Client ID or Secret).');
@@ -38,10 +40,11 @@ export class GoogleDocsService {
       const doc = await docs.documents.create({ requestBody: { title } });
       documentId = doc.data.documentId;
     } catch (e) {
+      console.error('[google-docs] document creation failed:', e.response?.data || e.message);
       if (e.message?.includes('invalid_grant') || e.response?.status === 400) {
         throw new Error('Google OAuth refresh failed. Your Refresh Token might be invalid or expired. Please reconnect in Integrations.');
       }
-      throw e;
+      throw new Error(`Google API Error: ${e.message}`);
     }
 
     // 2. Build the batchUpdate requests for formatting
@@ -64,20 +67,27 @@ export class GoogleDocsService {
     // Add scope items
     if (Array.isArray(scope)) {
       for (const item of scope) {
-        requests.push({ insertText: { endOfSegmentLocation: {}, text: `• ${item}\n` } });
+        if (item) requests.push({ insertText: { endOfSegmentLocation: {}, text: `• ${item}\n` } });
       }
     }
     requests.push({ insertText: { endOfSegmentLocation: {}, text: `\n` } });
 
     // Investment Section
-    const investmentText = `Investment & Timeline\nTotal Investment: $${budget.toLocaleString()}\nEstimated Duration: ${days} Business Days\nProposed Start Date: ${startDate}\n`;
+    const budgetNum = Number(budget) || 0;
+    const daysNum = Number(days) || 0;
+    const investmentText = `Investment & Timeline\nTotal Investment: $${budgetNum.toLocaleString()}\nEstimated Duration: ${daysNum} Business Days\nProposed Start Date: ${startDate}\n`;
     requests.push({ insertText: { endOfSegmentLocation: {}, text: investmentText } });
 
     // Execute the updates
-    await docs.documents.batchUpdate({
-      documentId,
-      requestBody: { requests }
-    });
+    try {
+      await docs.documents.batchUpdate({
+        documentId,
+        requestBody: { requests }
+      });
+    } catch (e) {
+      console.error('[google-docs] document formatting failed:', e.response?.data || e.message);
+      throw new Error(`Google API Formatting Error: ${e.message}`);
+    }
 
     return {
       documentId,
