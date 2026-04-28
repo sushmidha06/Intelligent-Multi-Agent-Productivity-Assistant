@@ -16,7 +16,14 @@ A production-grade demonstration of the **Model Context Protocol** (Anthropic 20
   - `razorpay` — invoices, payments, customers (reads user's test keys)
   - `expenses` — log expenses against a project
   - `knowledge_base` — semantic search over workspace + indexed inbox
-- **Multi-agent system** — `Planner` → `Executor` two-step loop (`python_ai/app/planner.py`, `agent.py`). The Planner produces a 1-5 step plan; the Executor (LangChain `AgentExecutor`) follows it with real tool-calling. Trivial messages skip planning to keep latency down.
+- **Multi-agent system** — six agents across two roles:
+  - **Chat-time** (request-driven): `Planner` → `Executor` two-step loop. The Planner (`python_ai/app/planner.py`) produces a 1-5 step plan; the Executor (`agent.py`, LangChain `AgentExecutor`) follows it with real tool-calling. Trivial messages skip planning to keep latency down.
+  - **Proactive** (scheduled, no user prompt — `python_ai/app/agents/`):
+    - `InboxTriageAgent` — LLM-based urgent/normal/low classification, single grouped nudge for urgent items
+    - `ProjectMonitorAgent` — rule-based health score from commits × days-left × budget burn; flags at-risk projects
+    - `AnomalyDetectorAgent` — silent clients (no email in 14d), overdue invoices past grace, burnout signal (off-hours activity), scope creep (spend ≥ 90% of budget)
+    - `RecurringWorkflowsAgent` — Monday-morning weekly digest, 1st-of-month invoice reminder
+  - Scheduler: `POST /agents/run?user_id=…` (auth: `X-Cron-Secret` header). Wired to a free **GitHub Actions cron** (`.github/workflows/cron.yml`) that runs every 30 min and iterates over all users. Each agent is idempotent within its dedupe window; all push notifications go through the existing in-app bell via Node's `/api/internal/notifications/push`.
 - **Proactive Agents** — Four specialized background agents (`python_ai/app/agents/`) that run on a schedule to monitor user data:
   - **Inbox Triage**: Uses Gemini to classify incoming emails by priority and pushes bundled notifications for urgent items.
   - **Project Monitor**: Computes a health score for every project based on commit cadence, deadlines, and budget burn.

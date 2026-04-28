@@ -93,6 +93,26 @@ To eliminate sleep, upgrade to Render's Starter plan (~$7/mo).
 
 ---
 
+## D. Proactive Agents (GitHub Actions Cron)
+
+The system runs background agents every 30 minutes to triage inboxes and monitor project health. This is orchestrated via a GitHub Actions workflow (`.github/workflows/cron.yml`).
+
+### Required Secrets
+
+To enable this, you **must** add the following secrets in **GitHub → Settings → Secrets and variables → Actions**:
+
+| Secret Name | Value |
+|-------------|-------|
+| `CRON_SHARED_SECRET` | A random string (must match the one on Vercel) |
+| `NODE_API_BASE_URL` | `https://sushmi-mcp.vercel.app/api` |
+| `PYTHON_AI_BASE_URL` | `https://sushmi-mcp-ai.onrender.com` |
+
+**Important:** You must also set the `CRON_SHARED_SECRET` on your Vercel project:
+`vercel env add CRON_SHARED_SECRET production`
+Then redeploy: `vercel --prod --yes`.
+
+---
+
 ## Env var reference
 
 | Var                        | Vercel | Render | Frontend build |
@@ -103,12 +123,15 @@ To eliminate sleep, upgrade to Render's Starter plan (~$7/mo).
 | `TOKEN_ENCRYPTION_KEY`     | ✓      |        |                |
 | `JWT_SHARED_SECRET`        | ✓      | ✓      |                |
 | `PYTHON_AI_BASE_URL`       | ✓      |        |                |
+| `CRON_SHARED_SECRET`       | ✓      |        |                |
 | `GEMINI_API_KEY`           |        | ✓      |                |
 | `GEMINI_MODEL`             |        | ✓ (default `gemini-2.0-flash`) |  |
 | `GEMINI_EMBED_MODEL`       |        | ✓ (default `models/gemini-embedding-001`) | |
 | `NODE_API_BASE_URL`        |        | ✓ (default `https://sushmi-mcp.vercel.app/api`) | |
 | `VITE_API_BASE_URL`        |        |        | ✓              |
 | `VITE_FIREBASE_*`          |        |        | ✓              |
+| `CRON_SHARED_SECRET`       | ✓      |        | (GitHub Secret) |
+| `NODE_API_BASE_URL`        |        | ✓      | (GitHub Secret) |
 
 ---
 
