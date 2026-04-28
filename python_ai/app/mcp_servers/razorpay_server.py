@@ -28,7 +28,8 @@ class RazorpayMcpServer(McpServer):
         if not conn:
             raise McpError("Razorpay is not connected. Ask the user to connect it in Integrations.")
         secrets = conn.get("secrets") or {}
-        key_id = secrets.get("keyId")
+        metadata = conn.get("metadata") or {}
+        key_id = secrets.get("keyId") or metadata.get("keyId")
         key_secret = secrets.get("keySecret")
         if not key_id or not key_secret:
             raise McpError("Razorpay connection is missing keyId or keySecret.")
