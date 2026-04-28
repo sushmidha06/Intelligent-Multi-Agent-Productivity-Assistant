@@ -34,6 +34,11 @@ class NodeClient:
         r.raise_for_status()
         return r.json()
 
+    def get_integrations(self) -> list[str]:
+        r = self._client.get("/internal/integrations", headers=self._headers())
+        r.raise_for_status()
+        return r.json().get("integrations", [])
+
     def get_email_bodies(self) -> list[dict]:
         """Pulls indexed email bodies from the per-user knowledge base
         (populated by POST /api/inbox/sync-rag)."""

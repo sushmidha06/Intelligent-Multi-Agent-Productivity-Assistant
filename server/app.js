@@ -619,6 +619,16 @@ app.get('/api/internal/connections/:provider', async (req, res) => {
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
+app.get('/api/internal/integrations', async (req, res) => {
+  const auth = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const claims = verifyServiceToken(auth);
+  if (!claims?.userId) return res.status(401).json({ error: 'invalid service token' });
+  try {
+    const list = await ConnectionsService.listConnections(claims.userId);
+    res.json({ integrations: list.map(c => c.provider) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // --- Internal: Python AI service fetches user's Firestore data ---
 app.get('/api/internal/data/:collection', async (req, res) => {
   const auth = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
