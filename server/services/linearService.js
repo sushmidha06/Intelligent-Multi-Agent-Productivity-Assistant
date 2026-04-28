@@ -8,15 +8,34 @@ export class LinearService {
       throw new Error('Linear not connected. Please provide your API Key in Integrations.');
     }
 
-    const r = await axios.post('https://api.linear.app/graphql', { query, variables }, {
-      headers: { 
-        Authorization: conn.secrets.apiKey,
-        'Content-Type': 'application/json'
-      }
-    });
+    // Linear personal API keys use the raw key as the Authorization value
+    // (no "Bearer " prefix). OAuth access tokens DO need "Bearer ". Detect
+    // and normalise so users can paste either form.
+    const raw = String(conn.secrets.apiKey).trim();
+    const authHeader = raw.startsWith('lin_oauth_') ? `Bearer ${raw}` : raw;
 
-    if (r.data.errors) {
-      throw new Error(r.data.errors[0].message);
+    let r;
+    try {
+      r = await axios.post('https://api.linear.app/graphql', { query, variables }, {
+        headers: {
+          Authorization: authHeader,
+          'Content-Type': 'application/json',
+        },
+        timeout: 15000,
+      });
+    } catch (e) {
+      // axios throws on non-2xx; surface Linear's actual error body.
+      const status = e.response?.status;
+      const linearMsg = e.response?.data?.errors?.[0]?.message
+        || JSON.stringify(e.response?.data || {}).slice(0, 300)
+        || e.message;
+      throw new Error(`Linear API ${status || 'request'} failed: ${linearMsg}`);
+    }
+
+    if (r.data?.errors?.length) {
+      const first = r.data.errors[0];
+      const extra = first.extensions?.userPresentableMessage || first.extensions?.code || '';
+      throw new Error(`Linear: ${first.message}${extra ? ` (${extra})` : ''}`);
     }
     return r.data.data;
   }
