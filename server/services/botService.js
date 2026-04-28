@@ -44,19 +44,21 @@ export class BotService {
       return "Your account is not linked to Sushmi. Please go to the web app and use the /link command to connect your Slack/Discord account.";
     }
 
-    // Call the Python AI service
-    const token = signServiceToken(internalUserId);
+    // Call the Python AI service. signServiceToken expects an OBJECT payload
+    // — passing a string here silently produces a JWT without `userId`, which
+    // the Python side then rejects (and the bot user sees a generic error).
+    const token = signServiceToken({ userId: internalUserId });
     try {
       const r = await axios.post(`${process.env.PYTHON_AI_BASE_URL}/chat`, {
         message: messageText,
-        history: [] // We could potentially store/retrieve bot history here
+        history: [],
       }, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${token}` },
+        timeout: 58000,
       });
-
       return r.data.response;
     } catch (e) {
-      console.error('Bot AI error:', e.message);
+      console.error('Bot AI error:', e.response?.data || e.message);
       return "Sorry, I encountered an error while processing your request.";
     }
   }
