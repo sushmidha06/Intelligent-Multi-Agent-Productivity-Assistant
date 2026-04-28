@@ -225,34 +225,21 @@ def check_rate_limit(user_id: str) -> int:
 # ----- Output filtering -----------------------------------------------------
 
 def redact_pii(text: str) -> tuple[str, int]:
-    """Redact emails, phone numbers, and card-shaped digit runs.
-    Returns (redacted_text, redactions_made)."""
+    """Redact high-risk PII (credit cards).
+    Emails and phone numbers are left intact to avoid annoying the user,
+    as they are the primary owner of the data.
+    """
     if not text:
         return text, 0
     count = 0
 
-    def _email(m):
-        nonlocal count
-        count += 1
-        return "[redacted-email]"
-
-    def _phone(m):
-        nonlocal count
-        count += 1
-        return "[redacted-phone]"
-
     def _card(m):
         nonlocal count
-        # Reject obvious false positives: short runs of digits separated by
-        # spaces show up in invoice IDs etc. Only redact 13+ contiguous digits
-        # after stripping separators.
         raw = re.sub(r"[\s-]", "", m.group(0))
         if len(raw) < 13:
             return m.group(0)
         count += 1
         return "[redacted-card]"
 
-    out = EMAIL_RE.sub(_email, text)
-    out = PHONE_RE.sub(_phone, out)
-    out = CARD_RE.sub(_card, out)
+    out = CARD_RE.sub(_card, text)
     return out, count
