@@ -11,7 +11,7 @@ function col(uid) {
   return firestore.collection('users').doc(uid).collection('connections');
 }
 
-const SUPPORTED = new Set(['github', 'gmail', 'razorpay', 'calendar']);
+const SUPPORTED = new Set(['github', 'gmail', 'razorpay', 'calendar', 'google_docs', 'toggl', 'linear', 'slack', 'discord']);
 
 function ensureSupported(provider) {
   if (!SUPPORTED.has(provider)) {

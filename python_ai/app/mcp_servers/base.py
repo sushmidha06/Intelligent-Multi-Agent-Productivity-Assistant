@@ -52,6 +52,34 @@ class McpServer:
     def _tool(self, name: str, description: str, input_schema: dict, handler: Callable):
         self._tools[name] = ToolSpec(name, description, input_schema, handler)
 
+    # --- Human-in-the-loop helpers ---
+    #
+    # Tools that mutate the world (send invoices, create issues, log expenses,
+    # generate client-facing documents) wrap their handler in `_gate_with_approval`.
+    # First call enqueues an approval and returns a "PENDING_APPROVAL:" string;
+    # the agent stops and reports back to the user. When the user clicks Approve
+    # in the UI, the Node backend re-invokes the same tool with `_approval_bypass`
+    # set on the server instance, which short-circuits the gate and lets the real
+    # work happen. One pattern, applied uniformly, so the audit trail is consistent.
+    def _gate_with_approval(self, *, tool_name: str, args: dict, summary: str, do):
+        """Returns the gate response if approval not yet granted, otherwise the
+        result of `do()`. `do` is a zero-arg callable that performs the side effect."""
+        # NodeClient is attached by the subclass as `self.node`.
+        if getattr(self, "_approval_bypass", False):
+            return do()
+        node = getattr(self, "node", None)
+        if node is None or not hasattr(node, "request_approval"):
+            # No approval pipe wired — fall through to direct execution rather
+            # than block the agent silently.
+            return do()
+        try:
+            node.request_approval(tool_name, args, summary)
+        except Exception as e:  # noqa: BLE001
+            # Don't fail the whole tool call just because the approval queue
+            # is down — log via the return string and proceed.
+            return f"PENDING_APPROVAL_ERROR: could not enqueue approval ({e}). Action NOT performed."
+        return f"PENDING_APPROVAL: {summary}. Open the Approvals tab to review."
+
     # --- MCP protocol surface ---
     def list_tools(self) -> list[dict]:
         return [

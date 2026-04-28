@@ -1,9 +1,26 @@
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
 import { RouterLink } from 'vue-router'
-import { FolderOpen, GitBranch, Calendar, TrendingUp, CheckCircle2, X, Loader2, AlertCircle, RefreshCw } from 'lucide-vue-next'
+import { FolderOpen, GitBranch, Calendar, TrendingUp, CheckCircle2, X, Loader2, AlertCircle, RefreshCw, FileText } from 'lucide-vue-next'
 import { projectService, integrationsService } from '../services/api'
 import { formatMoney, currencySymbol } from '../services/format'
+import { useAppStore } from '../stores/app'
+
+const appStore = useAppStore()
+
+// One-click handler that drops a pre-filled prompt into the chat drawer.
+// The drawer auto-sends, the agent gathers context (RAG + calendar) and
+// then routes through documents__generate_proposal which is approval-gated.
+function draftProposalFor(project) {
+  const client = project?.client || project?.name || 'this client'
+  const name = project?.name || 'the engagement'
+  const prompt = (
+    `Draft a proposal for ${client} for the project "${name}". ` +
+    `Use knowledge_base__search_knowledge to find similar past projects ` +
+    `for budget/timeline estimates, then call documents__generate_proposal.`
+  )
+  appStore.openChatWith(prompt)
+}
 
 const projects = ref([])
 const loading = ref(true)
@@ -139,7 +156,16 @@ function statusConfig(s) {
             <h3 class="font-bold text-white text-lg">{{ p.name }}</h3>
             <p class="text-sm text-slate-400">{{ p.client }}</p>
           </div>
-          <span :class="['text-xs px-2.5 py-1 rounded-full border font-semibold', statusConfig(p.status)]">{{ p.status }}</span>
+          <div class="flex items-center gap-2">
+            <button
+              @click="draftProposalFor(p)"
+              title="Draft a proposal in Google Docs (uses RAG over past projects)"
+              class="flex items-center gap-1 text-xs px-2.5 py-1 rounded-full border border-violet-500/30 text-violet-300 hover:bg-violet-500/10 transition-all"
+            >
+              <FileText :size="12" /> Draft Proposal
+            </button>
+            <span :class="['text-xs px-2.5 py-1 rounded-full border font-semibold', statusConfig(p.status)]">{{ p.status }}</span>
+          </div>
         </div>
 
         <div class="mb-4">

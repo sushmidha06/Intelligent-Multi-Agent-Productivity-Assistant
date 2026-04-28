@@ -29,8 +29,19 @@ export const integrationsService = {
 };
 
 export const chatService = {
-  send: (message, history) => api.post('/chat', { message, history: history || [] }).then(r => r.data),
-  warmup: () => api.get('/chat/warmup').then(r => r.data).catch(() => null),
+  async send(message, history = []) {
+    const r = await api.post('/chat', { message, history });
+    return r.data;
+  },
+  async sendAudio(audioBlob) {
+    const r = await api.post('/chat/audio', audioBlob, {
+      headers: { 'Content-Type': audioBlob.type || 'audio/webm' }
+    });
+    return r.data;
+  },
+  async warmup() {
+    return api.get('/chat/warmup').then(r => r.data).catch(() => null);
+  }
 };
 
 export const notificationsService = {

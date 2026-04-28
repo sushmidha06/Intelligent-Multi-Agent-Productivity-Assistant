@@ -52,6 +52,10 @@ class ExpensesMcpServer(McpServer):
             self._create,
         )
 
+    # Anything at or above this amount goes through the human approval queue.
+    # Small lattes don't need an approval gate; a $500 contractor charge does.
+    APPROVAL_THRESHOLD = 200.0
+
     def _create(
         self,
         vendor: str,
@@ -60,31 +64,44 @@ class ExpensesMcpServer(McpServer):
         category: str = "Other",
         project_id: str | None = None,
         notes: str | None = None,
-    ) -> dict:
+    ) -> dict | str:
         if not vendor or not vendor.strip():
             raise McpError("vendor is required")
         if amount is None or float(amount) <= 0:
             raise McpError("amount must be a positive number")
         if category not in ALLOWED_CATEGORIES:
             category = "Other"
+        amount = float(amount)
         payload = {
             "vendor": vendor.strip(),
-            "amount": float(amount),
+            "amount": amount,
             "category": category,
             "projectId": project_id or None,
             "notes": notes or "",
         }
         if date:
             payload["date"] = date
-        try:
-            created = self.node.create_expense(payload)
-            return {
-                "id": created.get("id"),
-                "vendor": created.get("vendor"),
-                "amount": created.get("amount"),
-                "category": created.get("category"),
-                "projectId": created.get("projectId"),
-                "date": created.get("date"),
-            }
-        except Exception as e:  # noqa: BLE001
-            raise McpError(f"could not create expense: {e}")
+
+        def do_create():
+            try:
+                created = self.node.create_expense(payload)
+                return {
+                    "id": created.get("id"),
+                    "vendor": created.get("vendor"),
+                    "amount": created.get("amount"),
+                    "category": created.get("category"),
+                    "projectId": created.get("projectId"),
+                    "date": created.get("date"),
+                }
+            except Exception as e:  # noqa: BLE001
+                raise McpError(f"could not create expense: {e}")
+
+        # Gate large expenses through human approval; pass small ones straight through.
+        if amount >= self.APPROVAL_THRESHOLD:
+            return self._gate_with_approval(
+                tool_name="expenses__create_expense",
+                args=payload,
+                summary=f"log a {category} expense of {amount:,.2f} from {payload['vendor']}",
+                do=do_create,
+            )
+        return do_create()

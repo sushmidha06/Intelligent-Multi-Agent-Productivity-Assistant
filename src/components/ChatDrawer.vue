@@ -1,7 +1,10 @@
 <script setup>
 import { ref, computed, nextTick, watch } from 'vue'
-import { Bot, X, Send, Loader2, Wrench, User } from 'lucide-vue-next'
+import { Bot, X, Send, Loader2, Wrench, User, Mic, Square } from 'lucide-vue-next'
 import { chatService } from '../services/api'
+import { useAppStore } from '../stores/app'
+
+const appStore = useAppStore()
 
 const props = defineProps({
   open: Boolean,
@@ -13,6 +16,75 @@ const input = ref('')
 const sending = ref(false)
 const scrollEl = ref(null)
 const error = ref('')
+
+const isRecording = ref(false)
+let mediaRecorder = null
+let audioChunks = []
+
+async function toggleRecording() {
+  if (isRecording.value) {
+    stopRecording()
+  } else {
+    startRecording()
+  }
+}
+
+async function startRecording() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    mediaRecorder = new MediaRecorder(stream)
+    audioChunks = []
+
+    mediaRecorder.ondataavailable = (event) => {
+      audioChunks.push(event.data)
+    }
+
+    mediaRecorder.onstop = async () => {
+      const audioBlob = new Blob(audioChunks, { type: 'audio/webm' })
+      if (audioBlob.size > 1000) {
+        await sendAudio(audioBlob)
+      }
+    }
+
+    mediaRecorder.start()
+    isRecording.value = true
+  } catch (err) {
+    console.error('Recording failed:', err)
+    error.value = 'Microphone access denied.'
+  }
+}
+
+function stopRecording() {
+  if (mediaRecorder) {
+    mediaRecorder.stop()
+    isRecording.value = false
+    mediaRecorder.stream.getTracks().forEach(t => t.stop())
+  }
+}
+
+async function sendAudio(blob) {
+  sending.value = true
+  messages.value.push({ role: 'user', content: '🎤 [Voice Memo]' })
+  await scrollBottom()
+  try {
+    const data = await chatService.sendAudio(blob)
+    messages.value.push({
+      role: 'assistant',
+      content: data.response || '(no response)',
+      toolCalls: data.tool_calls || [],
+    })
+  } catch (e) {
+    error.value = e?.response?.data?.error || e.message || 'Audio chat failed'
+    messages.value.push({
+      role: 'assistant',
+      content: `Sorry — ${error.value}`,
+      isError: true
+    })
+  } finally {
+    sending.value = false
+    await scrollBottom()
+  }
+}
 
 const suggestions = [
   'What projects are active right now?',
@@ -65,6 +137,14 @@ watch(() => props.open, (v) => {
   if (v) {
     scrollBottom()
     chatService.warmup()
+    // If a view opened the drawer with a pre-filled prompt, send it once
+    // and then clear it so we don't re-send on the next open.
+    const prefill = appStore.chatPrefill
+    if (prefill) {
+      appStore.chatPrefill = ''
+      // Defer one tick so the drawer has fully mounted before we fire.
+      nextTick(() => send(prefill))
+    }
   }
 })
 
@@ -167,6 +247,14 @@ function onKey(e) {
             placeholder="Ask about your projects, emails, invoices…"
             class="flex-1 resize-none px-3 py-2.5 rounded-xl text-sm bg-slate-900/60 border border-slate-700 text-white placeholder-slate-600 focus:outline-none focus:border-violet-500"
           />
+          <button
+            @click="toggleRecording"
+            :class="['shrink-0 w-10 h-10 rounded-xl flex items-center justify-center transition-all', 
+              isRecording ? 'bg-rose-600 text-white animate-pulse' : 'bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700']"
+          >
+            <Square v-if="isRecording" :size="15" />
+            <Mic v-else :size="15" />
+          </button>
           <button
             @click="send()"
             :disabled="sending || !input.trim()"

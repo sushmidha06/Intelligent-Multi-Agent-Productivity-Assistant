@@ -48,6 +48,13 @@ class NodeClient:
         r.raise_for_status()
         return r.json()
 
+    def create_invoice(self, payload: dict) -> dict:
+        """Used by the timesheet auto-billing tool to file an invoice on behalf
+        of the user. Returns the saved invoice document including its id."""
+        r = self._client.post("/internal/billing", headers=self._headers(), json=payload, timeout=15.0)
+        r.raise_for_status()
+        return r.json()
+
     def push_notification(self, title: str, body: str, kind: str = "info") -> dict:
         """Pushes an in-app notification for this user via the Node backend.
         Used by proactive agents to surface findings."""
@@ -55,6 +62,67 @@ class NodeClient:
             "/internal/notifications/push",
             headers=self._headers(),
             json={"title": title, "body": body, "kind": kind},
+            timeout=10.0,
+        )
+        r.raise_for_status()
+        return r.json()
+
+    def upload_document(self, file_name: str, content: bytes) -> str:
+        """Uploads a generated PDF to the Node backend for storage.
+        Returns the signed public URL of the uploaded document."""
+        headers = self._headers()
+        headers["X-File-Name"] = file_name
+        headers["Content-Type"] = "application/pdf"
+        r = self._client.post(
+            "/internal/documents/upload",
+            headers=headers,
+            content=content,
+            timeout=20.0,
+        )
+        r.raise_for_status()
+        return r.json().get("url", "")
+
+    def create_google_doc(self, payload: dict) -> dict:
+        """Asks the Node backend to create and format a Google Doc.
+        Returns { "url", "documentId", "title" }."""
+        r = self._client.post(
+            "/internal/documents/google-doc",
+            headers=self._headers(),
+            json=payload,
+            timeout=30.0,
+        )
+        r.raise_for_status()
+        return r.json()
+
+    def get_toggl_entries(self, start: str, end: str) -> list[dict]:
+        """Fetches Toggl time entries from the Node backend."""
+        r = self._client.get(
+            "/internal/timesheets/toggl",
+            headers=self._headers(),
+            params={"start": start, "end": end},
+            timeout=15.0,
+        )
+        r.raise_for_status()
+        return r.json().get("entries", [])
+
+    def list_linear_teams(self) -> list[dict]:
+        """Fetches the list of Linear teams."""
+        r = self._client.get("/internal/issues/linear/teams", headers=self._headers())
+        r.raise_for_status()
+        return r.json().get("teams", [])
+
+    def create_linear_issue(self, payload: dict) -> dict:
+        """Creates a Linear issue."""
+        r = self._client.post("/internal/issues/linear", headers=self._headers(), json=payload)
+        r.raise_for_status()
+        return r.json()
+
+    def request_approval(self, tool: str, arguments: dict, summary: str) -> dict:
+        """Sends a sensitive action to the Node backend for human approval."""
+        r = self._client.post(
+            "/internal/approvals",
+            headers=self._headers(),
+            json={"tool": tool, "arguments": arguments, "summary": summary},
             timeout=10.0,
         )
         r.raise_for_status()

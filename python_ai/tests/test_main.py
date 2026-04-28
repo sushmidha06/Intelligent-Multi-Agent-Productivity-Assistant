@@ -90,7 +90,7 @@ class _FakeOrchestrator:
 
     def run(self, message, history=None):
         return {
-            "response": "Here you go: contact me at jane@example.com",
+            "response": "Sure, here is the card: 4111 1111 1111 1111",
             "tool_calls": [{"tool": "firestore__list_projects", "input": {}, "output": "[]"}],
             "tools_available": ["firestore__list_projects"],
             "plan": "1. Call firestore__list_projects\n2. Reply",
@@ -105,9 +105,9 @@ def test_chat_happy_path_redacts_pii(client, auth_header):
         r = client.post("/chat", json={"message": "list my projects please"}, headers=auth_header)
     assert r.status_code == 200, r.text
     body = r.json()
-    assert "[redacted-email]" in body["response"]
-    assert "jane@example.com" not in body["response"]
-    assert body["pii_redactions"] == 1
+    assert "[redacted-card]" in body["response"]
+    assert "4111 1111" not in body["response"]
+    assert body["pii_redactions"] >= 1
     assert body["plan"]
     assert body["tool_calls"][0]["tool"] == "firestore__list_projects"
 

@@ -6,10 +6,19 @@ import {
   Settings, Bot, LogOut, Plug, Sparkles
 } from 'lucide-vue-next'
 import { useAuthStore } from './stores/auth'
+import { useAppStore } from './stores/app'
 import NotificationsMenu from './components/NotificationsMenu.vue'
 import ChatDrawer from './components/ChatDrawer.vue'
 
+const appStore = useAppStore()
+// Local toggle stays for the floating chat button; the store is for views
+// that want to launch the assistant with a pre-filled prompt.
 const chatOpen = ref(false)
+// Mirror the store's state into the local ref so existing template bindings
+// (`@click="chatOpen = true"`) keep working alongside `appStore.openChatWith`.
+import { watch } from 'vue'
+watch(() => appStore.chatOpen, (v) => { chatOpen.value = v })
+watch(chatOpen, (v) => { if (!v) appStore.closeChat() })
 
 const route = useRoute()
 const router = useRouter()

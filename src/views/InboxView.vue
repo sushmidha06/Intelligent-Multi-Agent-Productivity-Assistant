@@ -7,6 +7,9 @@ import {
 } from 'lucide-vue-next'
 import { inboxService, integrationsService, expensesService, projectService } from '../services/api'
 import { formatMoney, currencySymbol } from '../services/format'
+import { useAppStore } from '../stores/app'
+
+const appStore = useAppStore()
 
 const emails = ref([])           // all emails (excluding deleted by default)
 const folders = ref([])          // [{ path, top, label, count }]
@@ -126,6 +129,22 @@ async function draftReply(email) {
   } finally {
     draftingFor.value = null
   }
+}
+
+// One-click "file as Linear issue". The agent reads the full email body via
+// gmail__get_email_body, then calls issues__create_linear_issue, which is
+// approval-gated — the user reviews the proposed ticket before it ships.
+function fileAsIssue(email) {
+  const subject = email?.subject || '(no subject)'
+  const sender = email?.from || email?.fromAddress || 'a client'
+  const id = email?.id || email?.uid
+  const prompt = (
+    `Open the email with id ${id} (subject: "${subject}", from: ${sender}). ` +
+    `Read the full body with gmail__get_email_body, then file it as a Linear ` +
+    `issue using issues__create_linear_issue. Title should be short and ` +
+    `descriptive; description should include the relevant quoted excerpt.`
+  )
+  appStore.openChatWith(prompt)
 }
 
 async function checkGmailConnected() {
@@ -457,6 +476,12 @@ const priorityConfig = {
                   <Loader2 v-if="draftingFor === email.id" :size="12" class="animate-spin" />
                   <Zap v-else :size="12" />
                   {{ draftingFor === email.id ? 'Drafting…' : 'Draft AI reply' }}
+                </button>
+
+                <button @click="fileAsIssue(email)"
+                        title="Open Sushmi and file this email as a Linear issue (approval-gated)"
+                        class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                  <AlertCircle :size="12" /> File as Linear issue
                 </button>
               </div>
             </div>

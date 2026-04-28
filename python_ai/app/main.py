@@ -187,6 +187,90 @@ def chat(req: ChatRequest, claims: dict = Depends(require_user)) -> ChatResponse
         orch.close()
 
 
+@app.post("/chat/audio", response_model=ChatResponse)
+async def chat_audio(request: Request, claims: dict = Depends(require_user)) -> ChatResponse:
+    """Accepts an audio file, transcribes it via Gemini, and runs it through the orchestrator."""
+    if not settings.GEMINI_API_KEY:
+        raise HTTPException(status_code=503, detail="GEMINI_API_KEY not configured")
+    
+    body = await request.body()
+    if not body:
+        raise HTTPException(status_code=400, detail="No audio data provided")
+
+    user_id = claims["userId"]
+    user_id_ctx.set(user_id)
+    check_rate_limit(user_id)
+
+    # 1. Transcribe/Process audio via Gemini native API
+    # Since we want to use audio, we'll use the native Gemini REST API instead of the OpenAI shim.
+    try:
+        async with httpx.AsyncClient() as client:
+            # We'll use the Gemini 2.0 Flash model directly
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{settings.GEMINI_MODEL}:generateContent?key={settings.GEMINI_API_KEY}"
+            
+            # Simple multimodal prompt: "Transcribe this audio"
+            import base64
+            audio_b64 = base64.b64encode(body).decode('utf-8')
+            
+            payload = {
+                "contents": [{
+                    "parts": [
+                        {"text": "Transcription and Action: Output only the transcribed text of this voice memo. It is a command for a freelance assistant. Do not add comments, just the transcription."},
+                        {"inline_data": {"mime_type": "audio/webm", "data": audio_b64}}
+                    ]
+                }]
+            }
+            
+            res = await client.post(url, json=payload, timeout=30.0)
+            res.raise_for_status()
+            transcription = res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+            
+            log.info("audio_transcription", extra={"len": len(transcription), "text": transcription})
+    except Exception as e:
+        log.error(f"Audio processing failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to process audio: {str(e)}")
+
+    # 2. Run the transcription through the Orchestrator
+    orch = Orchestrator(user_id=user_id, email=claims.get("email"))
+    try:
+        result = orch.run(transcription, history=[])
+        redacted, n = redact_pii(result.get("response", ""))
+        result["response"] = redacted
+        result["pii_redactions"] = n
+        return ChatResponse(**result)
+    finally:
+        orch.close()
+
+
+@app.post("/approvals/execute")
+async def execute_approval(request: Request, claims: dict = Depends(require_user)) -> dict:
+    """Executes a previously pending tool call after human approval."""
+    data = await request.json()
+    tool_name = data.get("tool")
+    args = data.get("arguments", {})
+    
+    user_id = claims["userId"]
+    user_id_ctx.set(user_id)
+    
+    orch = Orchestrator(user_id=user_id, email=claims.get("email"))
+    try:
+        # Find the tool in the orchestrator's servers
+        for srv in orch.servers:
+            if tool_name in srv._tools:
+                # Set the bypass flag so the handler actually executes
+                srv._approval_bypass = True
+                # Directly call the handler
+                result = srv._tools[tool_name].handler(**args)
+                return {"success": True, "result": result}
+        
+        raise HTTPException(status_code=404, detail=f"Tool {tool_name} not found")
+    except Exception as e:
+        log.error(f"Approval execution failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        orch.close()
+
+
 # ---- Proactive agents scheduler --------------------------------------------
 
 def require_cron_secret(request: Request) -> None:

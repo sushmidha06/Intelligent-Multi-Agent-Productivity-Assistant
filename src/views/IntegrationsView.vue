@@ -63,6 +63,62 @@ const providers = {
     ],
     helpUrl: 'https://dashboard.razorpay.com/app/keys',
   },
+  google_docs: {
+    label: 'Google Docs',
+    icon: ExternalLink,
+    blurb: 'Proposal Generator agent creates and formats professional proposals directly in your Google Drive.',
+    color: 'from-blue-400 to-blue-600',
+    fields: [
+      { key: 'clientId',     label: 'Client ID',     type: 'text',     placeholder: '...googleusercontent.com' },
+      { key: 'clientSecret', label: 'Client Secret', type: 'password', placeholder: 'GOCSPX-...' },
+      { key: 'refreshToken', label: 'Refresh Token', type: 'password', placeholder: '1//...',
+        help: 'Enable Google Docs API in Cloud Console, create OAuth 2.0 credentials, and use a Playground or tool to get a long-lived Refresh Token.' },
+    ],
+    helpUrl: 'https://console.cloud.google.com/apis/library/docs.googleapis.com',
+  },
+  toggl: {
+    label: 'Toggl Track',
+    icon: Loader2,
+    blurb: 'Timesheet agent reads your time entries to generate detailed reports and automate your billing.',
+    color: 'from-pink-500 to-rose-600',
+    fields: [
+      { key: 'apiToken', label: 'API Token', type: 'password', placeholder: 'Paste your API token here',
+        help: 'Find this at the bottom of your Toggl Profile settings (track.toggl.com/profile).' },
+    ],
+    helpUrl: 'https://track.toggl.com/profile',
+  },
+  linear: {
+    label: 'Linear',
+    icon: CheckCircle2,
+    blurb: 'Issue Tracker agent turns client bug reports in Gmail into structured Linear tickets and tracks their progress.',
+    color: 'from-indigo-500 to-blue-700',
+    fields: [
+      { key: 'apiKey', label: 'Personal API Key', type: 'password', placeholder: 'lin_api_…',
+        help: 'Create in Linear → Settings → API → Personal API Keys.' },
+    ],
+    helpUrl: 'https://linear.app/settings/api',
+  },
+  slack: {
+    label: 'Slack Bot',
+    icon: Loader2,
+    blurb: 'Talk to Sushmi directly from Slack. Ask for status updates or draft emails from your phone.',
+    color: 'from-purple-500 to-indigo-600',
+    fields: [
+      { key: 'botToken',      label: 'Bot User OAuth Token', type: 'password', placeholder: 'xoxb-…' },
+      { key: 'signingSecret', label: 'Signing Secret',       type: 'password', placeholder: '••••••••' },
+    ],
+    helpUrl: 'https://api.slack.com/apps',
+  },
+  discord: {
+    label: 'Discord Bot',
+    icon: Loader2,
+    blurb: 'Expose your AI Orchestrator as a Discord bot for quick commands and mobile access.',
+    color: 'from-blue-600 to-indigo-800',
+    fields: [
+      { key: 'botToken', label: 'Bot Token', type: 'password', placeholder: 'MTA0...' },
+    ],
+    helpUrl: 'https://discord.com/developers/applications',
+  },
 }
 
 async function load() {

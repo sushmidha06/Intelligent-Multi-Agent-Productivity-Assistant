@@ -104,21 +104,17 @@ class TestSanitizeToolOutput:
 
 
 class TestRedactPii:
-    def test_redacts_email(self):
-        out, n = redact_pii("contact me at jane@example.com please")
-        assert "[redacted-email]" in out
-        assert "jane@example.com" not in out
-        assert n == 1
-
-    def test_redacts_phone(self):
-        out, n = redact_pii("call 415-555-0142 today")
-        assert "[redacted-phone]" in out
-        assert n == 1
-
     def test_redacts_card_shape(self):
         out, n = redact_pii("card 4111 1111 1111 1111 expires 12/26")
         assert "[redacted-card]" in out
         assert n >= 1
+
+    def test_emails_and_phones_are_NOT_redacted(self):
+        # We softened the rules so emails/phones pass through (UX for freelancer)
+        text = "contact jane@example.com at 415-555-0101"
+        out, n = redact_pii(text)
+        assert out == text
+        assert n == 0
 
     def test_short_digit_runs_not_redacted(self):
         out, n = redact_pii("invoice 12345")
@@ -131,10 +127,10 @@ class TestRedactPii:
         assert n == 0
 
     def test_multiple_redactions_counted(self):
-        out, n = redact_pii("a@b.com and c@d.org and 415-555-0142")
-        assert n == 3
-        assert "a@b.com" not in out
-        assert "c@d.org" not in out
+        # Only cards count now
+        out, n = redact_pii("card 4111 1111 1111 1111 and 4222 2222 2222 2222")
+        assert n == 2
+        assert "[redacted-card]" in out
 
 
 class TestRateLimiter:

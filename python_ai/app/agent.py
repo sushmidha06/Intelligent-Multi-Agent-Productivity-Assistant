@@ -30,6 +30,9 @@ from .mcp_servers.github_server import GithubMcpServer
 from .mcp_servers.gmail_server import GmailMcpServer
 from .mcp_servers.razorpay_server import RazorpayMcpServer
 from .mcp_servers.rag_server import RagMcpServer
+from .mcp_servers.documents_server import DocumentsMcpServer
+from .mcp_servers.timesheet_server import TimesheetsMcpServer
+from .mcp_servers.issue_tracker_server import IssueTrackerMcpServer
 from .node_client import NodeClient
 from .rag import RagIndex, build_docs_from_firestore, build_docs_from_emails
 from .settings import settings
@@ -44,6 +47,9 @@ You have access to MCP (Model Context Protocol) tools that let you act on the us
 - `calendar__*`       — their Google Calendar: list_upcoming_events, search_events, draft_event (one-click prefill URL)
 - `razorpay__*`       — their Razorpay invoices and payments
 - `expenses__create`  — log an expense (vendor, amount, date, category, optional project_id)
+- `documents__generate_proposal` — generate a professional PDF proposal for a client
+- `timesheets__list_time_entries` — fetch time tracking data from Toggl
+- `issues__*` — create and manage tickets in Linear
 - `knowledge_base__search_knowledge` — semantic search over the user's workspace
   (projects + invoices + alerts) AND their **indexed Gmail inbox** if they've
   hit "Sync inbox" on the Inbox page. Use `source: "email"` to scope to inbox only.
@@ -78,6 +84,22 @@ chain tools together until you've actually accomplished the goal. Examples:
   2. `gmail__list_recent_emails(limit=10)` for inbox volume
   3. `calendar__list_upcoming_events(days=7)` for what's coming up
   4. Compose a single short brief
+
+- "Draft a proposal for Acme Corp":
+  1. `knowledge_base__search_knowledge` for similar past projects to estimate budget/days
+  2. `calendar__list_upcoming_events` to find a realistic start date
+  3. `documents__generate_proposal` with the synthesized details
+
+- "Generate a timesheet for last week and bill Acme Corp":
+  1. `timesheets__list_time_entries` for the date range
+  2. `github__list_recent_commits` to verify work vs commits
+  3. `razorpay__create_invoice` (or `firestore__create_invoice`) with the hours breakdown
+
+- "I got a bug report from Acme in my email, log it":
+  1. `gmail__search_emails(query="from:Acme bug OR error OR issue")`
+  2. `gmail__get_email_body` to read the details
+  3. `issues__create_linear_issue` with the extracted info
+  4. (Optional) Draft an email reply saying the issue has been logged
 
 # Rules
 
@@ -167,6 +189,9 @@ class Orchestrator:
             RazorpayMcpServer(self.node),
             ExpensesMcpServer(self.node),
             RagMcpServer(self.rag_index),
+            DocumentsMcpServer(self.node),
+            TimesheetsMcpServer(self.node),
+            IssueTrackerMcpServer(self.node),
         ]
 
         # Flatten into LangChain tools

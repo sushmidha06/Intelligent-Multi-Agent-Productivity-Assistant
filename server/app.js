@@ -15,6 +15,12 @@ import { EmailBodyStore } from './services/emailBodyStore.js';
 import { classifyEmail, FOLDER_ORDER } from './services/emailClassifier.js';
 import { EmailMetaService } from './services/emailMetaService.js';
 import { ExpensesService, EXPENSE_CATEGORIES } from './services/expensesService.js';
+import { StorageService } from './services/storageService.js';
+import { GoogleDocsService } from './services/googleDocsService.js';
+import { TogglService } from './services/togglService.js';
+import { LinearService } from './services/linearService.js';
+import { ApprovalService } from './services/approvalService.js';
+import webhookRoutes from './routes/webhooks.js';
 import axios from 'axios';
 
 dotenv.config();
@@ -56,6 +62,8 @@ async function requireAuth(req, res, next) {
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', service: 'Sushmi-MCP Gateway' });
 });
+
+app.use('/api/webhooks', webhookRoutes);
 
 // --- Auth ---
 app.post('/api/auth/signup', async (req, res) => {
@@ -499,6 +507,27 @@ app.delete('/api/expenses/:id', requireAuth, async (req, res) => {
   }
 });
 
+app.post('/api/chat', requireAuth, async (req, res) => {
+  try {
+    const r = await axios.post(`${process.env.PYTHON_AI_BASE_URL}/chat`, req.body, {
+      headers: { Authorization: `Bearer ${signServiceToken(req.user.id, req.user.email)}` },
+    });
+    res.json(r.data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/chat/audio', requireAuth, express.raw({ type: 'audio/*', limit: '10mb' }), async (req, res) => {
+  try {
+    const r = await axios.post(`${process.env.PYTHON_AI_BASE_URL}/chat/audio`, req.body, {
+      headers: { 
+        Authorization: `Bearer ${signServiceToken(req.user.id, req.user.email)}`,
+        'Content-Type': req.headers['content-type'] || 'audio/webm'
+      },
+    });
+    res.json(r.data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // --- Warm up Render free-tier instance to avoid cold-start on first chat ---
 app.get('/api/chat/warmup', async (req, res) => {
   const aiUrl = process.env.PYTHON_AI_BASE_URL;
@@ -575,6 +604,41 @@ app.get('/api/internal/data/:collection', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Internal: timesheet-driven invoice creation. The auto-billing tool calls this
+// after gathering Toggl entries — same shape as POST /api/billing but auth'd via
+// the service token so the Python AI service can act on the user's behalf.
+app.post('/api/internal/billing', async (req, res) => {
+  const auth = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const claims = verifyServiceToken(auth);
+  if (!claims?.userId) return res.status(401).json({ error: 'invalid service token' });
+  const body = req.body || {};
+  if (!body.client || !body.amount) return res.status(400).json({ error: 'client and amount required' });
+  try {
+    const today = new Date();
+    const due = new Date(today.getTime() + 30 * 24 * 3600 * 1000);
+    const invoice = {
+      id: 'INV-' + Math.floor(1000 + Math.random() * 9000),
+      client: String(body.client).slice(0, 200),
+      issuedDate: today.toISOString().slice(0, 10),
+      dueDate: body.dueDate || due.toISOString().slice(0, 10),
+      amount: Number(body.amount),
+      status: body.status || 'Pending',
+      lineItems: Array.isArray(body.lineItems) ? body.lineItems.slice(0, 50) : [],
+      source: 'agent-timesheet',
+    };
+    const saved = await DBService.addToCollection('invoices', claims.userId, invoice);
+    await NotificationsService.push(claims.userId, {
+      title: `AI created invoice ${saved.id}`,
+      body: `${saved.client} • $${Number(saved.amount).toLocaleString()}`,
+      kind: 'success',
+      link: '/billing',
+    });
+    res.status(201).json(saved);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Internal: proactive agents push an in-app notification on behalf of the user.
 // Auth: same service-token header as the other /internal endpoints.
 app.post('/api/internal/notifications/push', async (req, res) => {
@@ -619,7 +683,119 @@ app.get('/api/internal/email-bodies', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Internal: AI service uploads a generated document (proposal, invoice pdf, etc.)
+app.post('/api/internal/documents/upload', express.raw({ type: 'application/pdf', limit: '5mb' }), async (req, res) => {
+  const auth = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const claims = verifyServiceToken(auth);
+  if (!claims?.userId) return res.status(401).json({ error: 'invalid service token' });
+  
+  const fileName = req.headers['x-file-name'] || 'document.pdf';
+  try {
+    const { url, path } = await StorageService.uploadDocument(claims.userId, fileName, req.body);
+    res.status(201).json({ url, path });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Internal: AI service creates a Google Doc proposal
+app.post('/api/internal/documents/google-doc', async (req, res) => {
+  const auth = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const claims = verifyServiceToken(auth);
+  if (!claims?.userId) return res.status(401).json({ error: 'invalid service token' });
+  
+  try {
+    const result = await GoogleDocsService.createProposal(claims.userId, req.body);
+    res.status(201).json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Internal: AI service fetches Toggl time entries
+app.get('/api/internal/timesheets/toggl', async (req, res) => {
+  const auth = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const claims = verifyServiceToken(auth);
+  if (!claims?.userId) return res.status(401).json({ error: 'invalid service token' });
+  
+  const { start, end } = req.query;
+  if (!start || !end) return res.status(400).json({ error: 'start and end dates required' });
+
+  try {
+    const entries = await TogglService.getTimeEntries(claims.userId, start, end);
+    res.json({ entries });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Internal: AI service manages Linear issues
+app.get('/api/internal/issues/linear/teams', async (req, res) => {
+  const auth = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const claims = verifyServiceToken(auth);
+  if (!claims?.userId) return res.status(401).json({ error: 'invalid service token' });
+  try {
+    const teams = await LinearService.listTeams(claims.userId);
+    res.json({ teams });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/internal/issues/linear', async (req, res) => {
+  const auth = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const claims = verifyServiceToken(auth);
+  if (!claims?.userId) return res.status(401).json({ error: 'invalid service token' });
+  try {
+    const issue = await LinearService.createIssue(claims.userId, req.body);
+    res.status(201).json(issue);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Internal: AI service requests an approval
+app.post('/api/internal/approvals', async (req, res) => {
+  const auth = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const claims = verifyServiceToken(auth);
+  if (!claims?.userId) return res.status(401).json({ error: 'invalid service token' });
+  try {
+    const approval = await ApprovalService.create(claims.userId, req.body);
+    // Push notification to user
+    await NotificationsService.push(claims.userId, {
+      title: 'Action Required',
+      body: `Sushmi wants to ${req.body.summary}. Please approve or reject.`,
+      kind: 'warning'
+    });
+    res.status(201).json(approval);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // --- App data (all per-user) ---
+app.get('/api/approvals', requireAuth, async (req, res) => {
+  try {
+    const list = await ApprovalService.list(req.user.id);
+    res.json({ approvals: list });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/approvals/:id/approve', requireAuth, async (req, res) => {
+  try {
+    const approval = await ApprovalService.updateStatus(req.user.id, req.params.id, 'approved');
+    // Execute the tool via Python service
+    const r = await axios.post(`${process.env.PYTHON_AI_BASE_URL}/approvals/execute`, {
+      tool: approval.tool,
+      arguments: approval.arguments
+    }, {
+      headers: { Authorization: `Bearer ${signServiceToken(req.user.id, req.user.email)}` }
+    });
+    res.json({ status: 'approved', result: r.data });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/approvals/:id/reject', requireAuth, async (req, res) => {
+  try {
+    await ApprovalService.updateStatus(req.user.id, req.params.id, 'rejected');
+    res.json({ status: 'rejected' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/dashboard', requireAuth, async (req, res) => {
   const data = await DBService.getDashboardStats(req.user.id);
   res.json(data);
