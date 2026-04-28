@@ -73,15 +73,24 @@ router.post('/slack', async (req, res) => {
       // Ack within 3s — required by Slack. Process in background after.
       res.sendStatus(200);
       try {
-        const reply = await BotService.processMessage('slack', user, text);
+        const cleanText = text.replace(/<@[A-Z0-9]+>/g, '').trim();
+        const reply = await BotService.processMessage('slack', user, cleanText);
         const internalUserId = await BotService.getInternalUserId('slack', user);
+        let token = process.env.SLACK_BOT_TOKEN;
+
         if (internalUserId) {
           const conn = await ConnectionsService.getDecryptedSecrets(internalUserId, 'slack');
           if (conn?.secrets?.botToken) {
-            await axios.post('https://slack.com/api/chat.postMessage', {
-              channel, text: reply,
-            }, { headers: { Authorization: `Bearer ${conn.secrets.botToken}` } });
+            token = conn.secrets.botToken;
           }
+        }
+
+        if (token) {
+          await axios.post('https://slack.com/api/chat.postMessage', {
+            channel, text: reply,
+          }, { headers: { Authorization: `Bearer ${token}` } });
+        } else {
+          console.warn('[slack-webhook] cannot reply: no bot token (global or per-user)');
         }
       } catch (e) {
         console.error('[slack-webhook] processing failed:', e.message);

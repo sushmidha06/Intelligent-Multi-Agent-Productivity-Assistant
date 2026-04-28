@@ -39,9 +39,24 @@ export class BotService {
    * Forwards a message from a bot to the AI Orchestrator.
    */
   static async processMessage(platform, platformUserId, messageText) {
-    const internalUserId = await this.getInternalUserId(platform, platformUserId);
+    let internalUserId = await this.getInternalUserId(platform, platformUserId);
+
+    // Handle manual linking: "link user@example.com"
+    const text = (messageText || '').trim();
+    if (text.toLowerCase().startsWith('link ')) {
+      const email = text.slice(5).trim().toLowerCase();
+      const snap = await firestore.collection('users').where('email', '==', email).limit(1).get();
+      if (!snap.empty) {
+        const userId = snap.docs[0].id;
+        await this.linkAccount(platform, platformUserId, userId);
+        return `Successfully linked your ${platform} account to ${email}. You can now ask me to list projects, draft emails, etc.`;
+      } else {
+        return `Could not find a Sushmi account with email "${email}". Make sure you've signed up in the web app first.`;
+      }
+    }
+
     if (!internalUserId) {
-      return "Your account is not linked to Sushmi. Please go to the web app and use the /link command to connect your Slack/Discord account.";
+      return "Your account is not linked to Sushmi. Please type `link your-email@example.com` to connect your Slack/Discord account to your Sushmi workspace.";
     }
 
     // Call the Python AI service. signServiceToken expects an OBJECT payload
