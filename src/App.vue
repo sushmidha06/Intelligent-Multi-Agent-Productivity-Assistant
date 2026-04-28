@@ -3,7 +3,7 @@ import { RouterView, RouterLink, useRoute, useRouter } from 'vue-router'
 import { computed, onMounted, ref } from 'vue'
 import {
   LayoutDashboard, Mail, FolderOpen, Receipt, Wallet,
-  Settings, Bot, LogOut, Plug, Sparkles
+  Settings, Bot, LogOut, Plug, Sparkles, ShieldCheck
 } from 'lucide-vue-next'
 import { useAuthStore } from './stores/auth'
 import { useAppStore } from './stores/app'
@@ -30,6 +30,7 @@ const navItems = [
   { name: 'Projects',     path: '/projects',     icon: FolderOpen      },
   { name: 'Billing',      path: '/billing',      icon: Receipt         },
   { name: 'Expenses',     path: '/expenses',     icon: Wallet          },
+  { name: 'Approvals',    path: '/approvals',    icon: ShieldCheck     },
   { name: 'Integrations', path: '/integrations', icon: Plug            },
 ]
 
