@@ -138,6 +138,10 @@ router.post('/discord', async (req, res) => {
     const userId = user?.id || member?.user?.id;
     const content = data?.options?.[0]?.value || '';
 
+    // Diagnostic: log the exact id we look up so we can spot mismatches with
+    // the Firestore mapping doc id. Remove after the link flow is built.
+    console.log('[discord-webhook] lookup', { platform: 'discord', userId, contentLen: content.length });
+
     // Ack with a deferred response; Discord gives us 15 min to follow up.
     res.json({ type: 4, data: { content: 'Processing your request…' } });
 
