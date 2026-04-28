@@ -1,14 +1,27 @@
 """Adapter that wraps MCP server tools as LangChain `StructuredTool`s,
-so the Gemini function-calling agent can invoke them transparently."""
+so the Gemini function-calling agent can invoke them transparently.
+
+Security: every tool's text output is passed through `sanitize_tool_output`
+before being returned to the agent. This catches **indirect** prompt
+injection — instructions embedded inside emails / PRs / GitHub issues that
+the agent reads on the user's behalf. The check is non-destructive: we
+prepend a security notice so the model knows to treat the content as data,
+not as instructions."""
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field, create_model
 
+from .guardrails import sanitize_tool_output
 from .mcp_servers.base import McpServer
+from .observability import metrics
+
+
+log = logging.getLogger("sushmi.tools")
 
 
 def _schema_to_pydantic(name: str, schema: dict) -> type[BaseModel]:
@@ -36,7 +49,7 @@ def mcp_server_to_langchain_tools(server: McpServer, namespace: str | None = Non
         tool_name = f"{ns}__{tool['name']}"
         args_model = _schema_to_pydantic(tool_name, tool.get("inputSchema") or {})
 
-        def _make_callable(_server: McpServer, _tool_name: str):
+        def _make_callable(_server: McpServer, _tool_name: str, _full_name: str):
             def _call(**kwargs):
                 # Strip None defaults to keep arg payload tight
                 cleaned = {k: v for k, v in kwargs.items() if v is not None}
@@ -44,9 +57,18 @@ def mcp_server_to_langchain_tools(server: McpServer, namespace: str | None = Non
                 # LangChain tools must return strings (or serialisable); MCP
                 # response is {content: [TextContent], isError}.
                 texts = [c.get("text", "") for c in (result.get("content") or []) if c.get("type") == "text"]
+                joined = "\n".join(texts) or "(empty)"
                 if result.get("isError"):
-                    return "ERROR: " + "\n".join(texts)
-                return "\n".join(texts) or "(empty)"
+                    return "ERROR: " + joined
+                # Defence against indirect prompt injection — see module docstring.
+                annotated, matched = sanitize_tool_output(joined)
+                if matched:
+                    metrics.incr("indirect_injection_detected_total", tool=_full_name)
+                    log.warning(
+                        "indirect_injection_in_tool_output",
+                        extra={"tool": _full_name, "pattern": matched},
+                    )
+                return annotated
             return _call
 
         out.append(
@@ -54,7 +76,7 @@ def mcp_server_to_langchain_tools(server: McpServer, namespace: str | None = Non
                 name=tool_name,
                 description=tool["description"],
                 args_schema=args_model,
-                func=_make_callable(server, tool["name"]),
+                func=_make_callable(server, tool["name"], tool_name),
             )
         )
     return out

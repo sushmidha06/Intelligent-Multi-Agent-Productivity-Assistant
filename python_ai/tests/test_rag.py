@@ -55,6 +55,31 @@ class TestChunkText:
         assert len(chunks) >= 3
         assert all(len(c) <= 300 for c in chunks)
 
+    def test_prefers_paragraph_boundaries(self):
+        # Two paragraphs that together fit in `size`. Should NOT split.
+        text = "First paragraph here.\n\nSecond paragraph here."
+        chunks = _chunk_text(text, size=200, overlap=20)
+        assert chunks == [text]
+
+    def test_splits_on_paragraphs_when_long(self):
+        para1 = "x" * 250
+        para2 = "y" * 250
+        text = f"{para1}\n\n{para2}"
+        chunks = _chunk_text(text, size=300, overlap=20)
+        # Each paragraph should land in its own chunk, not get sliced mid-paragraph.
+        assert any("x" * 200 in c for c in chunks)
+        assert any("y" * 200 in c for c in chunks)
+
+    def test_splits_on_sentence_boundary(self):
+        # Long text without paragraph breaks but with sentence punctuation.
+        text = ". ".join([f"Sentence number {i:02d}" for i in range(40)])
+        chunks = _chunk_text(text, size=120, overlap=20)
+        # No chunk should start mid-word of "Sentence" — the splitter should
+        # have used ". " as the boundary.
+        for c in chunks:
+            stripped = c.lstrip()
+            assert not stripped.startswith("entence"), f"Mid-word split: {c[:30]!r}"
+
 
 # ---------- Doc signature ----------
 

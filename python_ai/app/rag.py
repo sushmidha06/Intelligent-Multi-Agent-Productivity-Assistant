@@ -118,22 +118,88 @@ class Doc:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+_RECURSIVE_SEPARATORS = ["\n\n", "\n", ". ", " ", ""]
+
+
 def _chunk_text(text: str, size: int = 600, overlap: int = 80) -> list[str]:
-    """Sliding-window chunker. Tuned for short structured docs (projects,
-    invoices) — produces 1 chunk for short text, multiple for longer notes."""
+    """Recursive semantic chunker.
+
+    Tries to split on paragraph boundaries first (`\\n\\n`), then line breaks,
+    then sentence-ish boundaries (`. `), then words, falling back to raw
+    character splits only when nothing else fits. This keeps semantic units
+    intact — a sentence isn't chopped in half mid-word, and a paragraph isn't
+    split unless it's longer than `size` on its own.
+
+    Mirrors LangChain's `RecursiveCharacterTextSplitter` behaviour without
+    pulling in the dependency. Same `size` / `overlap` parameter shape so all
+    existing callers and tests continue to work."""
     text = (text or "").strip()
     if not text:
         return []
     if len(text) <= size:
         return [text]
+
+    chunks = _recursive_split(text, size, _RECURSIVE_SEPARATORS)
+    return _merge_with_overlap(chunks, size, overlap)
+
+
+def _recursive_split(text: str, size: int, separators: list[str]) -> list[str]:
+    """Split on the first separator that actually appears in `text`.
+    Pieces longer than `size` get re-split using the next separator down."""
+    if len(text) <= size:
+        return [text]
+    sep = next((s for s in separators if s and s in text), "")
+    if not sep:
+        # Last resort: hard character split.
+        return [text[i : i + size] for i in range(0, len(text), size)]
+    pieces = text.split(sep)
+    out: list[str] = []
+    remaining = separators[separators.index(sep) + 1 :] if sep in separators else [""]
+    for i, piece in enumerate(pieces):
+        # Re-attach the separator on rejoining so we don't lose punctuation.
+        chunk = piece + (sep if i < len(pieces) - 1 else "")
+        if len(chunk) <= size:
+            out.append(chunk)
+        else:
+            out.extend(_recursive_split(chunk, size, remaining))
+    return [c for c in out if c.strip()]
+
+
+def _merge_with_overlap(pieces: list[str], size: int, overlap: int) -> list[str]:
+    """Greedy: pack pieces together so each chunk stays at or below `size`,
+    carrying `overlap` chars from the end of one chunk into the start of the
+    next so context isn't lost across boundaries.
+
+    A piece that is itself longer than `size` (already char-split upstream)
+    is emitted as its own chunk untouched — adding overlap would push it
+    over the budget."""
+    if not pieces:
+        return []
     chunks: list[str] = []
-    step = size - overlap
-    for start in range(0, len(text), step):
-        chunk = text[start : start + size].strip()
-        if chunk:
-            chunks.append(chunk)
-        if start + size >= len(text):
-            break
+    buf = ""
+    for piece in pieces:
+        # Oversize piece — flush whatever's buffered and emit alone.
+        if len(piece) >= size:
+            if buf.strip():
+                chunks.append(buf.strip())
+                buf = ""
+            chunks.append(piece.strip())
+            continue
+        if not buf:
+            buf = piece
+            continue
+        # Reserve room for the overlap tail when chaining.
+        if len(buf) + len(piece) <= size:
+            buf += piece
+        else:
+            chunks.append(buf.strip())
+            tail = buf[-overlap:] if overlap > 0 and len(buf) > overlap else ""
+            # If even the overlap+piece would overflow, drop the overlap.
+            if len(tail) + len(piece) > size:
+                tail = ""
+            buf = (tail + piece) if tail else piece
+    if buf.strip():
+        chunks.append(buf.strip())
     return chunks
 
 
