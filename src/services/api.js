@@ -70,14 +70,17 @@ export const inboxService = {
 };
 
 export const projectService = {
-  getProjects: ()        => api.get('/projects').then(r => r.data),
-  createProject: (data)  => api.post('/projects', data).then(r => r.data),
+  getProjects:   ()        => api.get('/projects').then(r => r.data),
+  createProject: (data)    => api.post('/projects', data).then(r => r.data),
+  updateProject: (id, p)   => api.patch(`/projects/${id}`, p).then(r => r.data),
+  removeProject: (id)      => api.delete(`/projects/${id}`).then(r => r.data),
 };
 
 export const billingService = {
   getInvoices:   ()              => api.get('/billing').then(r => r.data),
   createInvoice: (data)          => api.post('/billing', data).then(r => r.data),
   updateInvoice: (id, patch)     => api.patch(`/billing/${id}`, patch).then(r => r.data),
+  deleteInvoice: (id)            => api.delete(`/billing/${id}`).then(r => r.data),
 };
 
 export const expensesService = {

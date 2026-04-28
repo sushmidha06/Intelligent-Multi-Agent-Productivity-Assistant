@@ -1,7 +1,7 @@
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
 import { RouterLink } from 'vue-router'
-import { FolderOpen, GitBranch, Calendar, TrendingUp, CheckCircle2, X, Loader2, AlertCircle, RefreshCw, FileText } from 'lucide-vue-next'
+import { FolderOpen, GitBranch, Calendar, TrendingUp, CheckCircle2, X, Loader2, AlertCircle, RefreshCw, FileText, Edit3, Trash2 } from 'lucide-vue-next'
 import { projectService, integrationsService } from '../services/api'
 import { formatMoney, currencySymbol } from '../services/format'
 import { useAppStore } from '../stores/app'
@@ -28,11 +28,10 @@ const showModal = ref(false)
 const submitting = ref(false)
 const error = ref('')
 
-// GitHub repo picker state
 const githubLoading = ref(false)
 const githubError = ref('')
-const githubRepos = ref([])         // [{ full_name, description, language, ... }]
-const githubConnected = ref(true)   // optimistic; flipped to false on 404
+const githubRepos = ref([])
+const githubConnected = ref(true)
 
 const form = reactive({
   name: '',
@@ -41,7 +40,7 @@ const form = reactive({
   health: 90,
   budget: 5000,
   daysLeft: 30,
-  repo: '',
+  repo: null,
 })
 
 async function load() {
@@ -58,10 +57,37 @@ async function load() {
 onMounted(load)
 
 function openModal() {
-  Object.assign(form, { name: '', client: '', status: 'On Track', health: 90, budget: 5000, daysLeft: 30, repo: '' })
+  editingId.value = null
+  Object.assign(form, { name: '', client: '', status: 'On Track', health: 90, budget: 5000, daysLeft: 30, repo: null })
   error.value = ''
   showModal.value = true
   loadGithubRepos()
+}
+
+function editProject(p) {
+  editingId.value = p.id
+  Object.assign(form, { 
+    name: p.name, 
+    client: p.client, 
+    status: p.status, 
+    health: p.health, 
+    budget: p.budget, 
+    daysLeft: p.daysLeft, 
+    repo: p.repo 
+  })
+  error.value = ''
+  showModal.value = true
+  loadGithubRepos()
+}
+
+async function removeProject(id) {
+  if (!confirm('Are you sure you want to delete this project?')) return
+  try {
+    await projectService.removeProject(id)
+    projects.value = projects.value.filter(p => p.id !== id)
+  } catch (err) {
+    alert('Failed to delete project')
+  }
 }
 
 async function loadGithubRepos() {
@@ -86,11 +112,10 @@ async function loadGithubRepos() {
 
 function pickRepo(fullName) {
   form.repo = fullName
-  // Auto-fill the project name with the repo name on first pick if name is empty
   if (!form.name.trim()) form.name = fullName.split('/').pop()
 }
 
-async function createProject() {
+async function saveProject() {
   error.value = ''
   if (!form.name.trim() || !form.client.trim()) {
     error.value = 'Name and client are required.'
@@ -98,19 +123,17 @@ async function createProject() {
   }
   submitting.value = true
   try {
-    const created = await projectService.createProject({
-      name: form.name.trim(),
-      client: form.client.trim(),
-      status: form.status,
-      health: Number(form.health),
-      budget: Number(form.budget),
-      daysLeft: Number(form.daysLeft),
-      repo: form.repo.trim() || null,
-    })
-    projects.value = [created, ...projects.value]
+    if (editingId.value) {
+      const updated = await projectService.updateProject(editingId.value, { ...form })
+      const idx = projects.value.findIndex(p => p.id === editingId.value)
+      if (idx !== -1) projects.value[idx] = updated
+    } else {
+      const created = await projectService.createProject({ ...form })
+      projects.value = [created, ...projects.value]
+    }
     showModal.value = false
   } catch (e) {
-    error.value = e?.response?.data?.error || e.message || 'Failed to create project.'
+    error.value = e?.response?.data?.error || e.message || 'Failed to save project.'
   } finally {
     submitting.value = false
   }
@@ -173,6 +196,12 @@ function statusConfig(s) {
             >
               <FileText :size="12" /> Draft Proposal
             </button>
+            <button @click="editProject(p)" class="p-2 rounded-lg text-slate-500 hover:text-white hover:bg-white/5 transition-all" title="Edit">
+              <Edit3 :size="16" />
+            </button>
+            <button @click="removeProject(p.id)" class="p-2 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-all" title="Delete">
+              <Trash2 :size="16" />
+            </button>
             <span :class="['text-xs px-2.5 py-1 rounded-full border font-semibold', statusConfig(p.status)]">{{ p.status }}</span>
           </div>
         </div>
@@ -211,21 +240,19 @@ function statusConfig(s) {
       </div>
     </div>
 
-    <!-- New project modal -->
     <Teleport to="body">
     <div v-if="showModal" class="fixed inset-0 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" style="z-index: 2147483000" @click.self="showModal = false">
       <div class="w-full max-w-2xl flex flex-col rounded-2xl border shadow-2xl overflow-hidden" style="background: var(--color-surface); border-color: var(--color-border); max-height: 90vh; height: auto">
         <header class="shrink-0 px-6 py-4 border-b flex items-center justify-between" style="border-color: var(--color-border)">
           <div>
-            <h3 class="text-base font-bold text-white">Create a new project</h3>
+            <h3 class="text-base font-bold text-white">{{ editingId ? 'Edit project' : 'Create a new project' }}</h3>
             <p class="text-[11px] text-slate-500 mt-0.5">Link a GitHub repository so your AI agents can track activity automatically.</p>
           </div>
           <button @click="showModal = false" class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:text-white hover:bg-white/5"><X :size="16" /></button>
         </header>
 
-        <form @submit.prevent="createProject" class="flex-1 min-h-0 overflow-y-auto px-6 py-5 space-y-5">
+        <form @submit.prevent="saveProject" class="flex-1 min-h-0 overflow-y-auto px-6 py-5 space-y-5">
 
-          <!-- Step 1 — GitHub repo -->
           <section>
             <div class="flex items-center justify-between mb-2">
               <label class="text-[11px] font-bold uppercase tracking-widest text-slate-400 flex items-center gap-1.5">
@@ -278,7 +305,6 @@ function statusConfig(s) {
             </p>
           </section>
 
-          <!-- Step 2 — Project details -->
           <section>
             <label class="text-[11px] font-bold uppercase tracking-widest text-slate-400 mb-3 block">2. Project details</label>
             <div class="grid grid-cols-2 gap-3">
@@ -323,10 +349,12 @@ function statusConfig(s) {
 
         <footer class="shrink-0 px-6 py-4 border-t flex items-center justify-end gap-2" style="border-color: var(--color-border); background: rgba(0,0,0,0.2)">
           <button type="button" @click="showModal = false" class="px-4 py-2 rounded-xl text-sm font-semibold text-slate-300 hover:text-white hover:bg-white/5">Cancel</button>
-          <button @click="createProject" :disabled="submitting" class="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white bg-cyan-600 hover:bg-cyan-500 shadow-lg shadow-cyan-500/20 disabled:opacity-60">
+          <button @click="saveProject" :disabled="submitting" class="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white bg-cyan-600 hover:bg-cyan-500 shadow-lg shadow-cyan-500/20 disabled:opacity-60">
             <Loader2 v-if="submitting" :size="14" class="animate-spin" />
-            <FolderOpen v-else :size="14" />
-            {{ submitting ? 'Creating…' : 'Create project' }}
+            <template v-else>
+              <FolderOpen :size="14" />
+              {{ editingId ? 'Update project' : 'Create project' }}
+            </template>
           </button>
         </footer>
       </div>

@@ -914,13 +914,13 @@ app.get('/api/projects', requireAuth, async (req, res) => {
   // Fetch participation stats (52-week commit histogram) per repo, in parallel.
   // GitHub returns 202 the first time it computes; fall back to one commits page.
   async function fetchCommitCount(repo) {
-    let count = null;
+    let participationCount = null;
     let pushedAt = null;
     try {
       const part = await axios.get(`https://api.github.com/repos/${repo}/stats/participation`, { headers, timeout: 6000 });
       const all = (part.data && part.data.all) || [];
       if (all.length) {
-        count = all.reduce((s, n) => s + n, 0);
+        participationCount = all.reduce((s, n) => s + n, 0);
       }
     } catch { /* fall through */ }
 
@@ -930,23 +930,23 @@ app.get('/api/projects', requireAuth, async (req, res) => {
       });
       pushedAt = commits.data?.[0]?.commit?.author?.date || null;
       
-      // If we don't have a count yet, or it's low, try to find total from Link header
-      if (count === null || count === 100) {
-        const link = commits.headers.link;
-        if (link && link.includes('rel="last"')) {
-          const match = link.match(/&page=(\d+)>; rel="last"/);
-          if (match) {
-            count = parseInt(match[1]) * 100; // rough estimate (last page * 100)
-          } else {
-            count = Math.max(count || 0, (commits.data || []).length);
-          }
-        } else {
-          count = Math.max(count || 0, (commits.data || []).length);
-        }
+      const link = commits.headers.link;
+      let totalFromLink = null;
+      if (link && link.includes('rel="last"')) {
+        const match = link.match(/&page=(\d+)>; rel="last"/);
+        if (match) totalFromLink = parseInt(match[1]) * 100;
       }
-    } catch { /* fall through */ }
 
-    return { repo, commits: count, pushedAt };
+      // Final count strategy:
+      // 1. If we have a Link header total (e.g. 500+ commits), use that.
+      // 2. Otherwise, use the larger of (participation last 52w) or (the count of items on page 1).
+      const page1Count = (commits.data || []).length;
+      let finalCount = totalFromLink || Math.max(participationCount || 0, page1Count);
+
+      return { repo, commits: finalCount, pushedAt };
+    } catch { 
+      return { repo, commits: participationCount, pushedAt };
+    }
   }
 
   const stats = await Promise.all([...new Set(reposNeeded)].map(fetchCommitCount));
@@ -997,6 +997,17 @@ app.post('/api/projects', requireAuth, async (req, res) => {
   res.status(201).json(saved);
 });
 
+app.patch('/api/projects/:id', requireAuth, async (req, res) => {
+  const updated = await DBService.updateInCollection('projects', req.user.id, req.params.id, req.body || {});
+  if (!updated) return res.status(404).json({ error: 'Project not found' });
+  res.json(updated);
+});
+
+app.delete('/api/projects/:id', requireAuth, async (req, res) => {
+  const ok = await DBService.removeFromCollection('projects', req.user.id, req.params.id);
+  res.json({ success: ok });
+});
+
 app.get('/api/billing', requireAuth, async (req, res) => {
   const invoices = await DBService.getCollection('invoices', req.user.id);
   res.json(invoices);
@@ -1037,6 +1048,11 @@ app.patch('/api/billing/:id', requireAuth, async (req, res) => {
     });
   }
   res.json(updated);
+});
+
+app.delete('/api/billing/:id', requireAuth, async (req, res) => {
+  const ok = await DBService.removeFromCollection('invoices', req.user.id, req.params.id);
+  res.json({ success: ok });
 });
 
 app.delete('/api/alerts/:id', requireAuth, async (req, res) => {

@@ -1,6 +1,6 @@
 <script setup>
 import { ref, reactive, onMounted, computed } from 'vue'
-import { Clock, CheckCircle2, AlertCircle, PlusCircle, Download, X } from 'lucide-vue-next'
+import { Clock, CheckCircle2, AlertCircle, PlusCircle, Download, X, Edit3, Trash2, Loader2 } from 'lucide-vue-next'
 import { billingService } from '../services/api'
 import { formatMoney, currencySymbol } from '../services/format'
 import { downloadInvoicePdf } from '../services/invoicePdf'
@@ -8,6 +8,7 @@ import { downloadInvoicePdf } from '../services/invoicePdf'
 const invoices = ref([])
 const loading = ref(true)
 const showModal = ref(false)
+const editingId = ref(null)
 const submitting = ref(false)
 const error = ref('')
 const toast = ref('')
@@ -42,12 +43,37 @@ function flashToast(msg) {
 }
 
 function openModal() {
+  editingId.value = null
   Object.assign(form, { client: '', amount: 1000, dueDate: '', status: 'Pending' })
   error.value = ''
   showModal.value = true
 }
 
-async function createInvoice() {
+function editInvoice(inv) {
+  editingId.value = inv.id
+  Object.assign(form, { 
+    client: inv.client, 
+    amount: inv.amount, 
+    dueDate: inv.dueDate || '', 
+    status: inv.status 
+  })
+  error.value = ''
+  showModal.value = true
+}
+
+async function removeInvoice(id) {
+  if (!confirm('Are you sure you want to delete this invoice?')) return
+  try {
+    // Note: need to add deleteInvoice to billingService in api.js
+    await billingService.deleteInvoice(id)
+    invoices.value = invoices.value.filter(i => i.id !== id)
+    flashToast('Invoice deleted')
+  } catch (err) {
+    flashToast('Failed to delete invoice')
+  }
+}
+
+async function saveInvoice() {
   error.value = ''
   if (!form.client.trim() || !form.amount) {
     error.value = 'Client and amount are required.'
@@ -55,17 +81,26 @@ async function createInvoice() {
   }
   submitting.value = true
   try {
-    const created = await billingService.createInvoice({
+    const payload = {
       client: form.client.trim(),
       amount: Number(form.amount),
       dueDate: form.dueDate || undefined,
       status: form.status,
-    })
-    invoices.value = [created, ...invoices.value]
+    }
+    
+    if (editingId.value) {
+      const updated = await billingService.updateInvoice(editingId.value, payload)
+      const idx = invoices.value.findIndex(i => i.id === editingId.value)
+      if (idx !== -1) invoices.value[idx] = updated
+      flashToast('Invoice updated')
+    } else {
+      const created = await billingService.createInvoice(payload)
+      invoices.value = [created, ...invoices.value]
+      flashToast(`Invoice ${created.id} created`)
+    }
     showModal.value = false
-    flashToast(`Invoice ${created.id} created`)
   } catch (e) {
-    error.value = e?.response?.data?.error || e.message || 'Failed to create invoice.'
+    error.value = e?.response?.data?.error || e.message || 'Failed to save invoice.'
   } finally {
     submitting.value = false
   }
@@ -164,14 +199,22 @@ function statusConfig(s) {
               <span :class="['text-xs px-2.5 py-1 rounded-full border font-semibold', statusConfig(inv.status).cls]">{{ inv.status }}</span>
             </td>
             <td class="px-6 py-4 text-right whitespace-nowrap">
-              <button
-                v-if="inv.status !== 'Paid'"
-                @click="markPaid(inv)"
-                class="text-xs font-semibold text-emerald-400 hover:underline mr-3"
-              >Mark paid</button>
-              <button @click="downloadInvoice(inv)" class="text-slate-500 hover:text-white transition-colors" title="Download">
-                <Download :size="15" />
-              </button>
+              <div class="flex items-center justify-end gap-2">
+                <button
+                  v-if="inv.status !== 'Paid'"
+                  @click="markPaid(inv)"
+                  class="text-xs font-semibold text-emerald-400 hover:underline mr-1"
+                >Mark paid</button>
+                <button @click="editInvoice(inv)" class="p-1.5 rounded-lg text-slate-500 hover:text-white hover:bg-white/5 transition-all" title="Edit">
+                  <Edit3 :size="14" />
+                </button>
+                <button @click="removeInvoice(inv.id)" class="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-all" title="Delete">
+                  <Trash2 :size="14" />
+                </button>
+                <button @click="downloadInvoice(inv)" class="p-1.5 rounded-lg text-slate-500 hover:text-white hover:bg-white/5 transition-all" title="Download">
+                  <Download :size="14" />
+                </button>
+              </div>
             </td>
           </tr>
         </tbody>
@@ -184,7 +227,7 @@ function statusConfig(s) {
       <div class="w-full max-w-lg flex flex-col rounded-2xl border shadow-2xl overflow-hidden" style="background: var(--color-surface); border-color: var(--color-border); max-height: 90vh; height: auto">
         <header class="shrink-0 px-6 py-4 border-b flex items-center justify-between" style="border-color: var(--color-border)">
           <div>
-            <h3 class="text-base font-bold text-white">Create a new invoice</h3>
+            <h3 class="text-base font-bold text-white">{{ editingId ? 'Edit invoice' : 'Create a new invoice' }}</h3>
             <p class="text-[11px] text-slate-500 mt-0.5">Tracked locally and visible to your AI agents.</p>
           </div>
           <button @click="showModal = false" class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:text-white hover:bg-white/5"><X :size="16" /></button>
@@ -222,9 +265,13 @@ function statusConfig(s) {
 
         <footer class="shrink-0 px-6 py-4 border-t flex items-center justify-end gap-2" style="border-color: var(--color-border); background: rgba(0,0,0,0.2)">
           <button type="button" @click="showModal = false" class="px-4 py-2 rounded-xl text-sm font-semibold text-slate-300 hover:text-white hover:bg-white/5">Cancel</button>
-          <button @click="createInvoice" :disabled="submitting" class="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-500 shadow-lg shadow-emerald-500/20 disabled:opacity-60">
-            <PlusCircle v-if="!submitting" :size="14" />
-            {{ submitting ? 'Creating…' : 'Create invoice' }}
+          <button @click="saveInvoice" :disabled="submitting" class="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-500 shadow-lg shadow-emerald-500/20 disabled:opacity-60">
+            <Loader2 v-if="submitting" :size="14" class="animate-spin" />
+            <template v-else>
+              <PlusCircle v-if="!editingId" :size="14" />
+              <Edit3 v-else :size="14" />
+              {{ editingId ? 'Update invoice' : 'Create invoice' }}
+            </template>
           </button>
         </footer>
       </div>
