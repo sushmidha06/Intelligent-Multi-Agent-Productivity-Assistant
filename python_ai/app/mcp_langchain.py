@@ -14,7 +14,7 @@ import logging
 from typing import Any
 
 from langchain_core.tools import StructuredTool
-from pydantic import BaseModel, Field, create_model
+from pydantic import BaseModel, Field, ValidationError, create_model
 
 from .guardrails import sanitize_tool_output
 from .mcp_servers.base import McpServer
@@ -22,6 +22,34 @@ from .observability import metrics
 
 
 log = logging.getLogger("sushmi.tools")
+
+
+def _format_validation_error(tool_name: str, exc: ValidationError) -> str:
+    """Convert Pydantic noise into a short, agent-readable hint so the LLM can
+    retry the tool call with corrected args, instead of the raw stack trace
+    leaking out to the user."""
+    parts: list[str] = []
+    for err in exc.errors():
+        field = ".".join(str(x) for x in err.get("loc", ())) or "(arg)"
+        etype = err.get("type", "")
+        if etype == "missing":
+            parts.append(f"`{field}` is required")
+        elif "string_type" in etype:
+            parts.append(f"`{field}` must be a string (e.g. a YYYY-MM-DD date)")
+        elif "int_type" in etype or "int_parsing" in etype:
+            parts.append(f"`{field}` must be an integer")
+        elif "float_type" in etype or "float_parsing" in etype:
+            parts.append(f"`{field}` must be a number")
+        elif "bool_type" in etype:
+            parts.append(f"`{field}` must be true/false")
+        else:
+            msg = err.get("msg", "invalid value")
+            parts.append(f"`{field}`: {msg}")
+    joined = "; ".join(parts) or "invalid arguments"
+    return (
+        f"Tool `{tool_name}` got invalid arguments: {joined}. "
+        f"Please call the tool again with the correct values."
+    )
 
 
 def _schema_to_pydantic(name: str, schema: dict) -> type[BaseModel]:

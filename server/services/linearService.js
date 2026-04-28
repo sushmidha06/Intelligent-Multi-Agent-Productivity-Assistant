@@ -56,14 +56,19 @@ export class LinearService {
     }
 
     const query = `
-      mutation CreateIssue($title: String!, $description: String, $teamId: String!, $priority: Float) {
+      mutation CreateIssue($title: String!, $description: String, $teamId: String!, $priority: Int) {
         issueCreate(input: { title: $title, description: $description, teamId: $teamId, priority: $priority }) {
           success
           issue { id identifier url title }
         }
       }
     `;
-    const data = await this._request(userId, query, { title, description, teamId: finalTeamId, priority });
+    const data = await this._request(userId, query, {
+      title,
+      description,
+      teamId: finalTeamId,
+      priority: Number.isFinite(Number(priority)) ? Math.trunc(Number(priority)) : 0,
+    });
     return data.issueCreate.issue;
   }
 

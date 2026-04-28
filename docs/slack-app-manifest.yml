@@ -1,0 +1,41 @@
+# Slack app manifest for Sushmi MCP
+# Paste this whole file into Slack's "From a manifest" dialog (YAML tab).
+#
+# After Slack creates the app:
+# 1. Settings → Basic Information → copy "Signing Secret"
+#    → set as SLACK_SIGNING_SECRET on Vercel
+# 2. Settings → Install App → install to your workspace
+#    → copy "Bot User OAuth Token" (xoxb-...)
+#    → users will paste this per-account in the Sushmi Integrations page
+# 3. Event Subscriptions URL is already declared below — Slack will verify it
+#    against your live Vercel deployment automatically.
+#
+# Replace the URL below if your Vercel domain differs.
+display_information:
+  name: Sushmi MCP
+  description: Your AI freelance copilot — ask Sushmi from any channel.
+  background_color: "#5B21B6"
+features:
+  bot_user:
+    display_name: Sushmi
+    always_online: true
+oauth_config:
+  scopes:
+    bot:
+      - app_mentions:read    # listen when mentioned
+      - chat:write           # post replies
+      - im:history           # read DMs to the bot
+      - im:read              # see DM channels
+      - im:write             # open DM conversations
+      - users:read           # resolve user ids -> names
+settings:
+  event_subscriptions:
+    request_url: https://sushmi-mcp.vercel.app/api/webhooks/slack
+    bot_events:
+      - app_mention
+      - message.im
+  interactivity:
+    is_enabled: false
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false

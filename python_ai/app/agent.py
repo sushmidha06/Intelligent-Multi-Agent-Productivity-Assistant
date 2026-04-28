@@ -13,14 +13,16 @@ iterates until it has an answer. Hard-capped at AGENT_MAX_ITERATIONS.
 from __future__ import annotations
 
 import time
+from datetime import date
 from typing import Any
 
 from langchain.agents import AgentExecutor, create_tool_calling_agent
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_openai import ChatOpenAI
+from pydantic import ValidationError
 
-from .mcp_langchain import mcp_server_to_langchain_tools
+from .mcp_langchain import _format_validation_error, mcp_server_to_langchain_tools
 from .observability import metrics
 from .planner import Planner
 from .mcp_servers.calendar_server import CalendarMcpServer
@@ -125,6 +127,32 @@ You are handling sensitive freelance data. You must protect the user's privacy:
 """
 
 
+def _friendly_tool_error(error: Exception) -> str:
+    """Convert tool-call validation/parsing errors into a clean instruction the
+    agent can act on, instead of letting Pydantic stack traces leak to the user
+    as 'Sorry — ValidationError: ...'.
+
+    Returned to the agent loop as the tool's observation, so the model retries
+    with corrected arguments on the next step."""
+    # LangChain wraps the underlying error; walk the cause chain to find a
+    # ValidationError if there is one.
+    cur: BaseException | None = error
+    seen: set[int] = set()
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if isinstance(cur, ValidationError):
+            # Tool name isn't directly available here; the error's title carries
+            # the args-model name (e.g. "timesheets__list_time_entriesArgs").
+            tool_name = (getattr(cur, "title", "") or "tool").removesuffix("Args")
+            return _format_validation_error(tool_name, cur)
+        cur = cur.__cause__ or cur.__context__
+
+    # Generic fallback: keep it short and user-friendly. The agent will see
+    # this and either retry or apologise gracefully.
+    msg = str(error).strip().splitlines()[0] if str(error).strip() else "unknown error"
+    return f"That tool call didn't go through ({msg}). Please try a different approach or ask the user for clarification."
+
+
 class AgentResult(dict):
     pass
 
@@ -214,8 +242,18 @@ class Orchestrator:
             max_retries=2,
         )
 
+        # Today's date is passed in so the model can resolve relative phrases
+        # ("today", "yesterday", "this week") into concrete YYYY-MM-DD strings
+        # before calling tools — without it, Gemini emits empty `{}` for
+        # required date params and Pydantic rejects the call.
+        today_preamble = (
+            f"Today's date is {date.today().isoformat()} (UTC). "
+            f"Resolve any relative dates ('today', 'yesterday', 'last week') "
+            f"into concrete YYYY-MM-DD strings before calling any tool."
+        )
         prompt = ChatPromptTemplate.from_messages(
             [
+                ("system", today_preamble),
                 ("system", SYSTEM_PROMPT),
                 MessagesPlaceholder(variable_name="chat_history", optional=True),
                 ("human", "{input}"),
@@ -229,7 +267,7 @@ class Orchestrator:
             max_iterations=settings.AGENT_MAX_ITERATIONS,
             verbose=False,
             return_intermediate_steps=True,
-            handle_parsing_errors=True,
+            handle_parsing_errors=_friendly_tool_error,
         )
 
         # Second agent in the multi-agent system. Lazy: only instantiated
