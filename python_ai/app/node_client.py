@@ -97,9 +97,16 @@ class NodeClient:
         return r.json().get("teams", [])
 
     def create_linear_issue(self, payload: dict) -> dict:
-        """Creates a Linear issue."""
+        """Creates a Linear issue. On non-2xx, surface the Node error body
+        instead of the bare HTTP status — otherwise the user just sees
+        '500 Internal Server Error' with no clue which Linear-side check failed."""
         r = self._client.post("/internal/issues/linear", headers=self._headers(), json=payload)
-        r.raise_for_status()
+        if r.status_code >= 400:
+            try:
+                detail = r.json().get("error") or r.text
+            except Exception:  # noqa: BLE001
+                detail = r.text or f"HTTP {r.status_code}"
+            raise RuntimeError(f"Linear: {detail}")
         return r.json()
 
     def request_approval(self, tool: str, arguments: dict, summary: str) -> dict:
