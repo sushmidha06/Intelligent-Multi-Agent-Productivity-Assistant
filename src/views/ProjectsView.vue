@@ -136,12 +136,21 @@ function statusConfig(s) {
         <h2 class="text-2xl font-bold text-white">Projects</h2>
         <p class="text-sm text-slate-400 mt-1">Real-time health across all active engagements</p>
       </div>
-      <button
-        @click="openModal"
-        class="flex items-center gap-2 px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 transition-all text-sm font-semibold text-white shadow-lg shadow-cyan-500/20"
-      >
-        <FolderOpen :size="14" /> New Project
-      </button>
+      <div class="flex items-center gap-2">
+        <button
+          @click="load"
+          :disabled="loading"
+          class="flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 transition-all text-sm font-semibold text-slate-300 border border-slate-700 disabled:opacity-50"
+        >
+          <RefreshCw :size="14" :class="loading ? 'animate-spin' : ''" /> Sync
+        </button>
+        <button
+          @click="openModal"
+          class="flex items-center gap-2 px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 transition-all text-sm font-semibold text-white shadow-lg shadow-cyan-500/20"
+        >
+          <FolderOpen :size="14" /> New Project
+        </button>
+      </div>
     </div>
 
     <div v-if="loading" class="text-sm text-slate-500">Loading projects…</div>
@@ -181,7 +190,8 @@ function statusConfig(s) {
         <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
           <div class="p-3 rounded-xl bg-slate-800">
             <p class="text-lg font-bold text-white">{{ p.commits }}</p>
-            <p class="text-xs text-slate-500 flex items-center justify-center gap-1 mt-0.5"><GitBranch :size="10" /> Commits</p>
+            <p class="text-[10px] text-slate-500 flex items-center justify-center gap-1 mt-0.5"><GitBranch :size="10" /> Commits</p>
+            <p v-if="p.lastSyncedAt" class="text-[8px] text-slate-600 mt-1 uppercase tracking-tighter">Synced {{ new Date(p.lastSyncedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }}</p>
           </div>
           <div class="p-3 rounded-xl bg-slate-800">
             <p :class="['text-lg font-bold', p.daysLeft < 0 ? 'text-rose-400' : 'text-white']">

@@ -20,6 +20,7 @@ import { TogglService } from './services/togglService.js';
 import { LinearService } from './services/linearService.js';
 import { ApprovalService } from './services/approvalService.js';
 import { BotService } from './services/botService.js';
+import { firestore } from './services/firebaseAdmin.js';
 import webhookRoutes from './routes/webhooks.js';
 import axios from 'axios';
 
@@ -692,11 +693,71 @@ app.get('/api/internal/users', async (req, res) => {
   if (!expected) return res.status(503).json({ error: 'CRON_SHARED_SECRET not configured' });
   if (presented !== expected) return res.status(401).json({ error: 'invalid cron secret' });
   try {
-    const { firestore } = await import('./services/firebaseAdmin.js');
     const snap = await firestore.collection('users').get();
     const users = snap.docs.map(d => ({ id: d.id, email: d.data().email || null }));
     res.json({ users });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// Internal: trigger a sync of all project stats for all users.
+// This is called by the cron job periodically.
+app.post('/api/internal/projects/sync', async (req, res) => {
+  const expected = process.env.CRON_SHARED_SECRET;
+  const presented = req.headers['x-cron-secret'];
+  if (!expected) return res.status(503).json({ error: 'CRON_SHARED_SECRET not configured' });
+  if (presented !== expected) return res.status(401).json({ error: 'invalid cron secret' });
+
+  try {
+    const snap = await firestore.collection('users').get();
+    const results = [];
+
+    for (const userDoc of snap.docs) {
+      const userId = userDoc.id;
+      const projects = await DBService.getCollection('projects', userId);
+      const ghConn = await ConnectionsService.getDecryptedSecrets(userId, 'github').catch(() => null);
+      
+      if (!ghConn?.secrets?.token) continue;
+
+      const repos = projects.filter(p => p.repo).map(p => p.repo);
+      if (repos.length === 0) continue;
+
+      // For each repo, fetch the latest stats and save them.
+      // We do this sequentially to avoid hitting GitHub rate limits too hard across users.
+      for (const repo of [...new Set(repos)]) {
+        try {
+          const headers = { Authorization: `token ${ghConn.secrets.token}`, Accept: 'application/vnd.github+json' };
+          const commits = await axios.get(`https://api.github.com/repos/${repo}/commits`, {
+            headers, params: { per_page: 1 }, timeout: 10000
+          });
+          
+          const pushedAt = commits.data?.[0]?.commit?.author?.date || null;
+          const link = commits.headers.link;
+          let count = 0;
+          if (link && link.includes('rel="last"')) {
+            const match = link.match(/&page=(\d+)>; rel="last"/);
+            count = match ? parseInt(match[1]) : 1;
+          } else {
+            count = (commits.data || []).length;
+          }
+
+          // Update all projects using this repo
+          for (const p of projects.filter(p => p.repo === repo)) {
+            await DBService.updateInCollection('projects', userId, p.id, {
+              commits: count,
+              pushedAt,
+              lastSyncedAt: new Date().toISOString()
+            });
+          }
+        } catch (err) {
+          console.error(`[internal-sync] failed for ${repo}:`, err.message);
+        }
+      }
+      results.push({ userId, projectsCount: projects.length });
+    }
+
+    res.json({ ok: true, usersProcessed: results.length });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // Internal: Python AI fetches indexed email bodies for RAG construction.
@@ -853,19 +914,39 @@ app.get('/api/projects', requireAuth, async (req, res) => {
   // Fetch participation stats (52-week commit histogram) per repo, in parallel.
   // GitHub returns 202 the first time it computes; fall back to one commits page.
   async function fetchCommitCount(repo) {
+    let count = null;
+    let pushedAt = null;
     try {
       const part = await axios.get(`https://api.github.com/repos/${repo}/stats/participation`, { headers, timeout: 6000 });
       const all = (part.data && part.data.all) || [];
-      if (all.length) return { repo, commits: all.reduce((s, n) => s + n, 0), pushedAt: null };
+      if (all.length) {
+        count = all.reduce((s, n) => s + n, 0);
+      }
     } catch { /* fall through */ }
+
     try {
       const commits = await axios.get(`https://api.github.com/repos/${repo}/commits`, {
         headers, params: { per_page: 100 }, timeout: 6000,
       });
-      return { repo, commits: (commits.data || []).length, pushedAt: commits.data?.[0]?.commit?.author?.date || null };
-    } catch {
-      return { repo, commits: null, pushedAt: null };
-    }
+      pushedAt = commits.data?.[0]?.commit?.author?.date || null;
+      
+      // If we don't have a count yet, or it's low, try to find total from Link header
+      if (count === null || count === 100) {
+        const link = commits.headers.link;
+        if (link && link.includes('rel="last"')) {
+          const match = link.match(/&page=(\d+)>; rel="last"/);
+          if (match) {
+            count = parseInt(match[1]) * 100; // rough estimate (last page * 100)
+          } else {
+            count = Math.max(count || 0, (commits.data || []).length);
+          }
+        } else {
+          count = Math.max(count || 0, (commits.data || []).length);
+        }
+      }
+    } catch { /* fall through */ }
+
+    return { repo, commits: count, pushedAt };
   }
 
   const stats = await Promise.all([...new Set(reposNeeded)].map(fetchCommitCount));
@@ -874,7 +955,20 @@ app.get('/api/projects', requireAuth, async (req, res) => {
     if (!p.repo) return p;
     const s = byRepo.get(p.repo);
     if (!s || s.commits == null) return p;
-    return { ...p, commits: s.commits, pushedAt: s.pushedAt || p.pushedAt };
+    
+    const hasChanged = s.commits !== p.commits || s.pushedAt !== p.pushedAt;
+    const now = new Date().toISOString();
+    
+    // Background save to Firestore so background agents see the updated stats
+    if (hasChanged) {
+      DBService.updateInCollection('projects', req.user.id, p.id, {
+        commits: s.commits,
+        pushedAt: s.pushedAt,
+        lastSyncedAt: now,
+      }).catch(err => console.error('[project-sync] background save failed:', err.message));
+    }
+
+    return { ...p, commits: s.commits, pushedAt: s.pushedAt || p.pushedAt, lastSyncedAt: hasChanged ? now : (p.lastSyncedAt || null) };
   });
   res.json(enriched);
 });
