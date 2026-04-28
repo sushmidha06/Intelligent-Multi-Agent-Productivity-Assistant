@@ -146,20 +146,39 @@ def list_mcp_servers(claims: dict = Depends(require_user)) -> dict:
         orch.close()
 
 
-def _verify_slack_signature(timestamp: str, signature: str, raw_body: bytes) -> bool:
+def _secret_fingerprint(secret: str) -> str:
+    """First 8 hex chars of sha256(secret). Safe to log: 32 bits of entropy is
+    enough to spot a copy-paste mismatch but useless for recovering the secret
+    (~1 in 4 billion collisions). Lets us prove both sides are using the same
+    SLACK_SIGNING_SECRET without ever revealing it."""
+    if not secret:
+        return "(empty)"
+    return hashlib.sha256(secret.encode("utf-8")).hexdigest()[:8]
+
+
+def _verify_slack_signature(timestamp: str, signature: str, raw_body: bytes) -> tuple[bool, str]:
     """Recompute Slack's HMAC-SHA256 over `v0:{ts}:{body}` and constant-time
-    compare. Reject anything older than 5 minutes to prevent replay."""
+    compare. Returns (ok, diagnostic) — diagnostic is a short reason string
+    used only when verification fails, for log triage."""
     secret = settings.SLACK_SIGNING_SECRET
-    if not secret or not timestamp or not signature:
-        return False
+    if not secret:
+        return False, "no_secret_configured"
+    if not timestamp or not signature:
+        return False, "missing_headers"
     try:
-        if abs(int(_time.time()) - int(timestamp)) > 60 * 5:
-            return False
+        skew = abs(int(_time.time()) - int(timestamp))
+        if skew > 60 * 5:
+            return False, f"stale_timestamp_skew={skew}s"
     except ValueError:
-        return False
+        return False, "non_numeric_timestamp"
     base = f"v0:{timestamp}:".encode("utf-8") + raw_body
     expected = "v0=" + hmac.new(secret.encode("utf-8"), base, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(expected, signature)
+    if hmac.compare_digest(expected, signature):
+        return True, "ok"
+    # Log signature *prefixes* (first 10 chars) so we can eyeball whether the
+    # mismatch is a wrong-secret problem (full divergence) vs a body-canon
+    # problem (matching prefix). Never log the full signature.
+    return False, f"hmac_mismatch expected={expected[:10]}.. got={signature[:10]}.."
 
 
 async def _process_slack_event(user_id: str, channel: str, text: str, bot_token: str) -> None:
@@ -208,10 +227,20 @@ async def slack_webhook(request: Request) -> Any:
     if body.get("type") == "url_verification":
         return {"challenge": body.get("challenge", "")}
 
-    if not _verify_slack_signature(timestamp, signature, raw):
+    ok, diag = _verify_slack_signature(timestamp, signature, raw)
+    if not ok:
+        # `secretFp` is a non-reversible fingerprint of the secret currently
+        # loaded in this process. Compare it across deploys / between Slack
+        # and Render to confirm a copy-paste mismatch without leaking the
+        # secret itself. `retry` headers help spot Slack's automatic retries.
         log.warning(
-            "slack-webhook rejected: signature mismatch (rawBodyLen=%d, hasSecret=%s)",
-            len(raw), bool(settings.SLACK_SIGNING_SECRET),
+            "slack-webhook rejected: %s (rawBodyLen=%d, ts=%s, secretFp=%s, retryNum=%s, retryReason=%s)",
+            diag,
+            len(raw),
+            timestamp or "(none)",
+            _secret_fingerprint(settings.SLACK_SIGNING_SECRET),
+            request.headers.get("x-slack-retry-num", "0"),
+            request.headers.get("x-slack-retry-reason", "-"),
         )
         raise HTTPException(status_code=401, detail="invalid signature")
 
